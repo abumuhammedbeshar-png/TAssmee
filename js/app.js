@@ -449,7 +449,8 @@
     if (jumped) toast('تابعناك من الموضع الذي تقرأ منه');
     if (changed.some((i) => R.sess.state[i] === 'err')) buzz(70);
     scrollToCur();
-    if (R.sess.done) { stopListening(); setTimeout(finish, 350); }
+    // لا ننهي تلقائياً إن وصلنا للنهاية بقفزة؛ قد يعود القارئ إلى ما تخطّاه
+    if (R.sess.done && !jumped) { stopListening(); setTimeout(finish, 350); }
   }
   function onPartial(text) {
     if (!R.sess) return;
@@ -724,83 +725,52 @@
       document.head.appendChild(s);
     });
   }
-  /*
-   * إعادة بناء الأسطر من مواضع الحروف: كثير من ملفات PDF العربية تخزّن الحروف
-   * بترتيبها المرئي (من اليسار)، فنجمع العناصر في أسطر حسب y ثم نرتّبها حسب x
-   * من اليمين لليسار في الأسطر العربية، ومن اليسار لليمين في غيرها.
-   */
-  const RTL_CH = /[֐-ࣿיִ-﷿ﹰ-﻿]/g;
-  const LTR_CH = /[A-Za-zÀ-ɏ]/g;
-  function fixLtrRuns(arr) {
-    const isL = (i) => i.dir === 'ltr' && /[A-Za-z0-9]/.test(i.s);
-    const out = arr.slice();
-    let k = 0;
-    while (k < out.length) {
-      if (!isL(out[k])) { k++; continue; }
-      let e = k;
-      while (e + 1 < out.length && (isL(out[e + 1]) || (/^\s+$/.test(out[e + 1].s) && e + 2 < out.length && isL(out[e + 2])))) e++;
-      if (e > k) out.splice(k, e - k + 1, ...out.slice(k, e + 1).reverse());
-      k = e + 1;
+  // استخراج النص وإصلاح تقطيع الكلمات العربية: js/pdftext.js
+  const { pageText, cleanText, flipText, looksReversed, detectLang, hasText, repairBase } = window.PdfText;
+  const XV = 2; // إصدار طريقة الاستخراج؛ الكتب الأقدم تُعاد معالجتها تلقائياً
+
+  async function extractPages(buf, onProg) {
+    const pdfjs = await loadPdfjs();
+    const task = pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)), wasmUrl: WASM(), isEvalSupported: false });
+    const doc = await task.promise;
+    const pages = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      pages.push(pageText(tc.items));
+      page.cleanup();
+      if (onProg) onProg(p, doc.numPages);
     }
-    return out;
+    try { await task.destroy(); } catch (e) { /* ignore */ }
+    let flipped = false;
+    if (looksReversed(pages)) { for (let i = 0; i < pages.length; i++) pages[i] = flipText(pages[i]); flipped = true; }
+    return { pages, flipped };
   }
-  function itemsToText(items) {
-    const its = [];
-    for (const it of items) {
-      if (typeof it.str !== 'string' || !it.str || !it.transform) continue;
-      const t = it.transform;
-      its.push({ s: it.str, dir: it.dir, x: t[4], y: t[5], w: it.width || 0, h: Math.abs(t[3]) || it.height || 10 });
+
+  /** الكتب المستوردة بإصدار أقدم: نعيد استخراجها من ملف PDF المحفوظ (مع إبقاء الصفحات المعدّلة يدوياً) */
+  async function upgradeBook(b) {
+    if (b.xv === XV) return false;
+    const manual = new Set(b.manual || []);
+    const blob = await DB.get('pdfs', b.id);
+    if (blob && !b.pasted) {
+      toast('نحسّن استخراج نص هذا الكتاب…', 4000);
+      try {
+        const { pages, flipped } = await extractPages(await blob.arrayBuffer());
+        pages.forEach((t, i) => {
+          if (manual.has(i + 1)) return;
+          if (!hasText(t) && hasText(b.pages[i])) return;
+          b.pages[i] = t;
+        });
+        b.flipped = flipped;
+      } catch (e) { console.error(e); b.pages = b.pages.map((t, i) => (manual.has(i + 1) ? t : repairBase(t))); }
+    } else {
+      b.pages = b.pages.map((t, i) => (manual.has(i + 1) ? t : repairBase(t)));
     }
-    if (!its.length) return '';
-    its.sort((a, b) => b.y - a.y);
-    const lines = [];
-    for (const it of its) {
-      const L = lines[lines.length - 1];
-      if (L && Math.abs(L.y - it.y) <= Math.max(L.h, it.h) * 0.5) { L.items.push(it); L.h = Math.max(L.h, it.h); }
-      else lines.push({ y: it.y, h: it.h, items: [it] });
-    }
-    const dys = [];
-    for (let i = 1; i < lines.length; i++) dys.push(lines[i - 1].y - lines[i].y);
-    const med = dys.length ? dys.slice().sort((a, b) => a - b)[Math.floor(dys.length / 2)] : 0;
-    let out = '';
-    lines.forEach((L, li) => {
-      const all = L.items.map((i) => i.s).join('');
-      const r = (all.match(RTL_CH) || []).length, l = (all.match(LTR_CH) || []).length;
-      const rtl = r > 0 && r >= l;
-      let arr = L.items.slice().sort((a, b) => (rtl ? b.x - a.x : a.x - b.x));
-      if (rtl) arr = fixLtrRuns(arr);
-      let line = '';
-      arr.forEach((c, k) => {
-        if (k) {
-          const p = arr[k - 1];
-          const gap = rtl ? p.x - (c.x + c.w) : c.x - (p.x + p.w);
-          if (gap > L.h * 0.22 && !/\s$/.test(line) && !/^\s/.test(c.s)) line += ' ';
-        }
-        line += c.s;
-      });
-      if (li) out += med && dys[li - 1] > med * 1.5 ? '\n\n' : '\n';
-      out += line;
-    });
-    return out;
+    b.xv = XV;
+    await DB.put('books', b.id, b);
+    return true;
   }
-  function cleanText(s) {
-    return String(s || '').normalize('NFKC').replace(/ /g, ' ').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  }
-  const COMMON = new Set(['في', 'من', 'على', 'إلى', 'أن', 'الله', 'التي', 'الذي', 'عن', 'ما', 'لا', 'هذا', 'هذه', 'كان', 'قال', 'هو', 'هي', 'مع', 'كل', 'أو', 'ثم', 'قد', 'لم', 'بين', 'ذلك', 'إذا', 'عند', 'كما', 'إلا', 'وقد', 'وهو', 'فإن'].map(M.norm));
-  const commonScore = (t) => M.words(t).reduce((c, w) => c + (COMMON.has(w) ? 1 : 0), 0);
-  const flipLine = (l) => (l.match(/\P{M}\p{M}*/gu) || []).reverse().join('');
-  const flipText = (t) => t.split('\n').map(flipLine).join('\n');
-  function looksReversed(pages) {
-    const sample = pages.slice(0, 15).join('\n').slice(0, 20000);
-    const a = commonScore(sample), b = commonScore(flipText(sample));
-    return b >= 5 && b > a * 2;
-  }
-  function detectLang(t) {
-    const ar = (t.match(/[؀-ۿ]/g) || []).length;
-    const la = (t.match(/[A-Za-z]/g) || []).length;
-    return la > ar ? 'en-US' : 'ar-SA';
-  }
-  const hasText = (t) => String(t || '').replace(/\s/g, '').length >= 10;
+  const markManual = (b, p) => { b.manual = Array.from(new Set([...(b.manual || []), p])); };
   function toParas(t) {
     const out = [];
     let cur = '';
@@ -831,25 +801,14 @@
     const prog = $('#pdf-prog'), bar = $('#pdf-prog i'), lab = $('#pdf-prog span');
     prog.hidden = false; bar.style.width = '0%'; lab.textContent = 'جارٍ فتح الملف…';
     try {
-      const pdfjs = await loadPdfjs();
       const buf = await file.arrayBuffer();
-      const task = pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)), wasmUrl: WASM(), isEvalSupported: false });
-      const doc = await task.promise;
-      const pages = [];
-      for (let p = 1; p <= doc.numPages; p++) {
-        const page = await doc.getPage(p);
-        const tc = await page.getTextContent();
-        pages.push(cleanText(itemsToText(tc.items)));
-        page.cleanup();
-        bar.style.width = (p / doc.numPages) * 100 + '%';
-        lab.textContent = `استخراج النص: صفحة ${AR(p)} من ${AR(doc.numPages)}`;
-      }
-      try { await task.destroy(); } catch (e) { /* ignore */ }
-      let flipped = false;
-      if (looksReversed(pages)) { for (let i = 0; i < pages.length; i++) pages[i] = flipText(pages[i]); flipped = true; }
+      const { pages, flipped } = await extractPages(buf, (p, n) => {
+        bar.style.width = (p / n) * 100 + '%';
+        lab.textContent = `استخراج النص: صفحة ${AR(p)} من ${AR(n)}`;
+      });
       const first = Math.max(1, pages.findIndex(hasText) + 1);
       const id = 'b' + Date.now().toString(36);
-      const book = { id, name: file.name.replace(/\.pdf$/i, ''), pageCount: pages.length, pages, lang: detectLang(pages.join(' ')), flipped, created: Date.now(), from: first, to: first };
+      const book = { id, name: file.name.replace(/\.pdf$/i, ''), pageCount: pages.length, pages, lang: detectLang(pages.join(' ')), flipped, created: Date.now(), from: first, to: first, xv: XV };
       await DB.put('books', id, book);
       try { await DB.put('pdfs', id, new Blob([buf], { type: 'application/pdf' })); } catch (e) { /* ignore */ }
       prog.hidden = true;
@@ -877,6 +836,7 @@
   async function openBook(id) {
     const b = await DB.get('books', id);
     if (!b) { toast('لم يُعثر على الكتاب'); return; }
+    if (await upgradeBook(b)) toast('حسّنّا استخراج النص وأصلحنا الكلمات المقطّعة', 3500);
     BV.book = b;
     BV.pg = b.from || 1;
     $('#bv-title').textContent = b.name;
@@ -936,6 +896,7 @@
     o = o || {};
     const b = BV.book && BV.book.id === id ? BV.book : await DB.get('books', id);
     if (!b) { toast('لم يُعثر على الكتاب'); return; }
+    await upgradeBook(b);
     const from = clamp(o.from || b.from || 1, 1, b.pageCount);
     const to = clamp(o.to || b.to || from, from, b.pageCount);
     const blocks = [];
@@ -986,7 +947,8 @@
         btn.textContent = `التعرّف على صفحة ${AR(p)} (${AR(++k)} من ${AR(targets.length)})…`;
         const canvas = await renderPage(doc, p, 2);
         const r = await worker.recognize(canvas);
-        b.pages[p - 1] = cleanText(r.data.text);
+        b.pages[p - 1] = repairBase(cleanText(r.data.text));
+        markManual(b, p);
       }
       await DB.put('books', b.id, b);
       toast('تم استخراج النص. راجعه وعدّل ما يلزم قبل التسميع.', 4000);
@@ -1209,6 +1171,7 @@
     $('#bv-cancel').onclick = () => { $('#bv-editwrap').hidden = true; $('#bv-preview').hidden = false; };
     $('#bv-save').onclick = () => {
       BV.book.pages[BV.pg - 1] = cleanText($('#bv-editor').value);
+      markManual(BV.book, BV.pg);
       DB.put('books', BV.book.id, BV.book);
       $('#bv-editwrap').hidden = true; $('#bv-preview').hidden = false;
       renderBV(); toast('حُفظ نص الصفحة');
@@ -1253,6 +1216,14 @@
     refreshMemo();
     try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySettings); } catch (e) { /* ignore */ }
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        // نسخة جديدة من التطبيق نُشرت: نعيد التحميل إن لم يكن المستخدم في منتصف تسميع
+        if (!hadController || reloading || !$('#reader').hidden) return;
+        reloading = true;
+        location.reload();
+      });
       window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
     }
     window.__tasmee = { R, S, DB, loadPdfjs, renderPage, flipText, looksReversed };

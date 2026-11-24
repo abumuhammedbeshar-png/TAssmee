@@ -1,13 +1,13 @@
 /* عامل الخدمة: يجعل التطبيق يعمل دون اتصال بعد أول فتح */
-const VERSION = 'tasmee-v4';
+const VERSION = 'tasmee-v5';
 const SHELL = [
-  './', 'index.html', 'css/style.css', 'js/matcher.js', 'js/asr.js', 'js/asr-worker.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 const RUNTIME = 'tasmee-runtime';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

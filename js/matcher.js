@@ -129,6 +129,14 @@
             if (c < best) { best = c; bk = 6; bs = s3; }
           }
         }
+        if (j >= 3) { // كلمة مسموعة = ثلاث قطع في النص (نصوص PDF المقطّعة)
+          const cat3 = T[j - 3] + T[j - 2] + T[j - 1];
+          const s4 = sim(R[i - 1], cat3);
+          if (s4 >= mthr) {
+            const c = D[at(i - 1, j - 3)] + 0.15 + (1 - s4) * 0.5;
+            if (c < best) { best = c; bk = 7; bs = s4; }
+          }
+        }
         D[at(i, j)] = best; B[at(i, j)] = bk; S[at(i, j)] = bs;
       }
     }
@@ -147,6 +155,7 @@
       else if (k === 3) { ops.push({ type: 'D', r: [], t: [j - 1] }); j--; }
       else if (k === 5) { ops.push({ type: 'M', r: [i - 1], t: [j - 2, j - 1], sim: S[at(i, j)] }); i--; j -= 2; }
       else if (k === 6) { ops.push({ type: 'M', r: [i - 2, i - 1], t: [j - 1], sim: S[at(i, j)] }); i -= 2; j--; }
+      else if (k === 7) { ops.push({ type: 'M', r: [i - 1], t: [j - 3, j - 2, j - 1], sim: S[at(i, j)] }); i--; j -= 3; }
       else break;
     }
     ops.reverse();
@@ -201,17 +210,20 @@
 
     /** اعتماد عبارة نهائية من التعرّف. يعيد فهارس الكلمات التي تغيّرت حالتها */
     feed(text) {
-      if (this.done) return { changed: [], jumped: false };
       const toks = tokenize(text);
       const R = toks.map((t) => t.n);
       if (!R.length) return { changed: [], jumped: false };
       let base = this.pos;
-      let { ops, end } = align(R, this._window(R.length), this.thr);
+      let ops = [], end = 0;
+      if (!this.done) ({ ops, end } = align(R, this._window(R.length), this.thr));
       let jumped = false;
       const changed = [];
 
       if (countM(ops) === 0 && R.length >= 3) {
-        const j = this._findAhead(R);
+        // القارئ ليس حيث نظن: نبحث عمّا يقرؤه أمام المؤشر، ثم خلفه (إن عاد إلى موضع سابق)
+        // القفز للأمام يحتاج ٤ كلمات متطابقة على الأقل (أقل ضرراً أن نتأخر من أن نقفز خطأً)
+        const j = (this.done ? null : this._find(R, this.pos + 1, Math.min(this.N, this.pos + 800), false, 4)) ||
+          this._find(R, Math.max(0, this.pos - 1500), this.pos, true, 3);
         if (j) {
           for (let k = this.pos; k < j.at; k++) {
             if (this.state[k] === 'p') { this.state[k] = 'skip'; changed.push(k); }
@@ -227,7 +239,7 @@
       for (const o of ops) {
         if (o.type === 'M') {
           seenM = true;
-          for (const t of o.t) { const g = base + t; if (this.state[g] === 'p') { this.state[g] = 'ok'; changed.push(g); } }
+          for (const t of o.t) { const g = base + t; if (this.state[g] === 'p' || this.state[g] === 'skip') { this.state[g] = 'ok'; changed.push(g); } }
         } else if (o.type === 'S') {
           const g = base + o.t[0];
           this.state[g] = 'err'; this.heard[g] = toks[o.r[0]].disp; changed.push(g);
@@ -248,17 +260,19 @@
       return { changed, jumped };
     }
 
-    _findAhead(R) {
-      const need = Math.max(3, Math.ceil(R.length * 0.7));
-      const from = this.pos + 1, to = Math.min(this.N, this.pos + 800);
+    _find(R, from, to, last, min) {
+      const need = Math.max(min || 3, Math.ceil(R.length * 0.7));
+      let found = null;
       for (let k = from; k < to; k++) {
         if (sim(R[0], this.T[k]) < this.thr && sim(R[1], this.T[k]) < this.thr) continue;
         const T = this.T.slice(k, Math.min(this.N, k + R.length * 2 + 8));
         const a = align(R, T, this.thr);
         const first = a.ops.find((o) => o.type !== 'I');
-        if (first && first.type === 'M' && first.t[0] === 0 && countM(a.ops) >= need) return { at: k, ops: a.ops, end: a.end };
+        const n = first && first.type === 'M' && first.t[0] === 0 ? countM(a.ops) : 0;
+        // الأكثر تطابقاً؛ وعند التساوي: الأقرب إلى المؤشر
+        if (n >= need && (!found || n > found.n || (last && n === found.n))) found = { at: k, ops: a.ops, end: a.end, n };
       }
-      return null;
+      return found;
     }
 
     hint() {

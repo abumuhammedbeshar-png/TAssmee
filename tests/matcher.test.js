@@ -88,6 +88,20 @@ t('noise does not move the cursor or add errors', () => {
   assert.strictEqual(s.pos, 2); assert.strictEqual(s.stats().err, 0);
 });
 
+t('short phrase found later does not jump (needs 4 words)', () => {
+  const s = mk(FATIHA);
+  s.feed('مالك يوم الدين');
+  assert.strictEqual(s.pos, 0); assert.strictEqual(s.state[0], 'p');
+});
+
+t('after jumping to the very end, reader can still go back', () => {
+  const s = mk(FATIHA + ' ' + 'صراط الذين انعمت عليهم');
+  s.feed('صراط الذين انعمت عليهم');
+  assert.ok(s.done);
+  s.feed('بسم الله الرحمن الرحيم الحمد لله');
+  assert.strictEqual(s.state[0], 'ok'); assert.strictEqual(s.pos, 6); assert.ok(!s.done);
+});
+
 t('jumping ahead marks skipped words (not errors)', () => {
   const s = mk(FATIHA);
   s.feed('مالك يوم الدين اياك نعبد');
@@ -137,6 +151,26 @@ t('alef-only difference is rejected in strict mode (قل ≠ قال)', () => {
   assert.notStrictEqual(a.state[0], 'ok');
   const b = mk('قَالَ رَبِّ', 'mid'); b.feed('قل رب');
   assert.strictEqual(b.state[0], 'ok');
+});
+
+t('reader goes back after a wrong jump → follows again', () => {
+  const s = mk(FATIHA);
+  s.feed('مالك يوم الدين اياك نعبد');            // jumps ahead, words 0..9 skipped
+  assert.strictEqual(s.state[0], 'skip');
+  s.feed('بسم الله الرحمن الرحيم الحمد لله');     // reader starts from the beginning
+  assert.strictEqual(s.state[0], 'ok'); assert.strictEqual(s.state[5], 'ok');
+  assert.strictEqual(s.pos, 6);
+  s.feed('رب العالمين الرحمن الرحيم');
+  assert.strictEqual(s.pos, 10); assert.strictEqual(s.stats().err, 0);
+});
+
+t('words split into 2–3 pieces by a PDF still match', () => {
+  const s = mk('منصة معار ف التعليمي ة نبذه ع ن دور ة مراح ل');
+  s.feed('منصة معارف التعليمية نبذه عن دورة مراحل');
+  assert.strictEqual(s.stats().err, 0, JSON.stringify(s.state)); assert.ok(s.done);
+  const s3 = mk('ال تعليمي ة الحديثة');
+  s3.feed('التعليمية الحديثة');
+  assert.strictEqual(s3.stats().err, 0); assert.ok(s3.done);
 });
 
 t('English book text works too', () => {
