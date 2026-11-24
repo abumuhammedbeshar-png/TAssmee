@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b5345">
+<meta name="description" content="تسميع: راجع حفظك للقرآن الكريم أو لأي كتاب PDF بصوتك، مع تصحيح فوري لكل كلمة.">
+<title>تسميع</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@400;600&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path fill="currentColor" d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 1 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6-3.6a1 1 0 1 0-2 0 4 4 0 0 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.9V20H8.5a1 1 0 1 0 0 2h7a1 1 0 1 0 0-2H13v-2.7a6 6 0 0 0 5-5.9Z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-eyeoff" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 3l18 18M10.6 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3.2 3.9M6.3 7.3C3.9 9 2.5 12 2.5 12S6 18.5 12 18.5c1.6 0 3-.4 4.2-1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8.2 5.3-1.6-.9a6.9 6.9 0 0 0 0-1.8l1.6-.9-1.8-3.2-1.6.9a7 7 0 0 0-1.6-.9V5.2h-3.7V7a7 7 0 0 0-1.6.9l-1.6-.9-1.8 3.2 1.6.9a6.9 6.9 0 0 0 0 1.8l-1.6.9 1.8 3.2 1.6-.9c.5.4 1 .7 1.6.9v1.8h3.7V17c.6-.2 1.1-.5 1.6-.9l1.6.9 1.8-3.2Z"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3Z"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 21V4m0 0h11l-2 4 2 4H5"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5"/></symbol>
+    <symbol id="i-kbd" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14h8"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M15.5 15.5 21 21"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5C17 4.5 14 5 12 6.5Zm0 0v13"/></symbol>
+    <symbol id="i-quran" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M5 4.5h11.5A2.5 2.5 0 0 1 19 7v12.5H7.5A2.5 2.5 0 0 1 5 17V4.5Zm0 12.5a2.5 2.5 0 0 1 2.5-2.5H19"/><path fill="currentColor" d="m12 6.6.8 1.6 1.7.2-1.3 1.2.4 1.7-1.6-.9-1.6.9.4-1.7-1.3-1.2 1.7-.2Z"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5 20V11m7 9V5m7 15v-6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.9l10.2-6.5a1 1 0 0 0 0-1.8L9.5 4.6A1 1 0 0 0 8 5.5Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/></symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M9 4.5h6V7H9zM9 5.5H6.5A1.5 1.5 0 0 0 5 7v12.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V7a1.5 1.5 0 0 0-1.5-1.5H15M8.5 12h7M8.5 16h5"/></symbol>
+    <symbol id="i-star8" viewBox="0 0 40 40"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M20 2.5 25.1 7.7H32.3V14.9L37.5 20 32.3 25.1V32.3H25.1L20 37.5 14.9 32.3H7.7V25.1L2.5 20 7.7 14.9V7.7H14.9Z"/></symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <main id="home">
+    <!-- ============ المصحف ============ -->
+    <section class="tab" id="tab-quran" data-tab="quran">
+      <header class="hero">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"><img src="icons/icon-192.png" alt=""></span>
+          <b>تسميع</b>
+          <button class="icon light" data-act="settings" aria-label="الإعدادات"><svg><use href="#i-gear"/></svg></button>
+        </div>
+        <div class="hero-grid">
+          <div>
+            <h1>راجع حفظك بصوتك</h1>
+            <p class="lede">اقرأ من حفظك، ويتابعك التطبيق كلمةً كلمة: ينبّهك إلى ما أخطأت فيه، ويكشف لك ما نسيته.</p>
+          </div>
+          <svg class="hero-art" viewBox="0 0 220 170" aria-hidden="true">
+            <g fill="none" stroke="var(--gold)" stroke-width="5" stroke-linecap="round">
+              <path d="M78 52a46 46 0 0 1 64 0" opacity=".45"/>
+              <path d="M90 66a28 28 0 0 1 40 0" opacity=".7"/>
+              <path d="M101 79a12 12 0 0 1 18 0"/>
+            </g>
+            <path d="M40 150 180 96M180 150 40 96" stroke="#d9c7a1" stroke-width="9" stroke-linecap="round" opacity=".85"/>
+            <path d="M110 98c-20-10-48-14-76-10v50c28-4 56 0 76 10Z" fill="#faf6ec"/>
+            <path d="M110 98c20-10 48-14 76-10v50c-28-4-56 0-76 10Z" fill="#f1e9d6"/>
+            <path d="M110 98v50" stroke="#0b5345" stroke-width="2.5"/>
+            <g stroke="#0b5345" stroke-opacity=".35" stroke-width="3" stroke-linecap="round">
+              <path d="M46 102c18-2 36 0 52 5M46 114c18-2 36 0 52 5M46 126c18-2 36 0 52 5"/>
+              <path d="M122 107c16-5 34-7 52-5M122 119c16-5 34-7 52-5M122 131c16-5 34-7 52-5"/>
+            </g>
+            <circle cx="160" cy="111" r="3.5" fill="var(--gold)"/>
+          </svg>
+        </div>
+        <div id="continue"></div>
+        <div class="quick">
+          <button class="qbtn" data-act="vsearch"><svg><use href="#i-mic"/></svg><span>ابحث بالتلاوة</span></button>
+          <button class="qbtn" data-act="go-books"><svg><use href="#i-upload"/></svg><span>سمّع من كتاب PDF</span></button>
+        </div>
+      </header>
+      <div class="band">
+        <div class="listhead">
+          <h2>السور</h2>
+          <label class="search"><svg><use href="#i-search"/></svg><input id="q-surah" type="search" placeholder="ابحث باسم السورة أو رقمها" autocomplete="off"></label>
+        </div>
+        <ol id="surahs" class="surahs" aria-live="polite"><li class="loading">جارٍ تحميل فهرس السور…</li></ol>
+      </div>
+    </section>
+
+    <!-- ============ كتبي ============ -->
+    <section class="tab" id="tab-books" data-tab="books" hidden>
+      <header class="hero small">
+        <div class="brand"><b>كتبي</b><button class="icon light" data-act="settings" aria-label="الإعدادات"><svg><use href="#i-gear"/></svg></button></div>
+        <h1>سمّع من أي كتاب</h1>
+        <p class="lede">ارفع كتاباً بصيغة PDF، واختر الصفحات التي حفظتها، ثم اقرأها من ذاكرتك والنصُّ مخفيّ.</p>
+      </header>
+      <div class="band">
+        <label class="drop" id="drop">
+          <input type="file" id="pdf-in" accept="application/pdf,.pdf" hidden>
+          <svg><use href="#i-upload"/></svg>
+          <b>اختر ملف PDF</b>
+          <span>أو اسحبه وأفلته هنا · يبقى الملف على جهازك فقط</span>
+        </label>
+        <div id="pdf-prog" class="prog" hidden><div class="bar"><i></i></div><span></span></div>
+        <button class="btn ghost wide" data-act="paste"><svg><use href="#i-paste"/></svg>أو الصق نصاً مباشرةً</button>
+        <h2 class="sec">مكتبتي</h2>
+        <div id="books" class="books"></div>
+      </div>
+    </section>
+
+    <!-- ============ تقدّمي ============ -->
+    <section class="tab" id="tab-progress" data-tab="progress" hidden>
+      <header class="hero small">
+        <div class="brand"><b>تقدّمي</b><button class="icon light" data-act="settings" aria-label="الإعدادات"><svg><use href="#i-gear"/></svg></button></div>
+        <div id="today" class="today"></div>
+      </header>
+      <div class="band" id="progress"></div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="الأقسام">
+    <button data-go="quran" aria-current="page"><svg><use href="#i-quran"/></svg><span>المصحف</span></button>
+    <button data-go="books"><svg><use href="#i-book"/></svg><span>كتبي</span></button>
+    <button data-go="progress"><svg><use href="#i-chart"/></svg><span>تقدّمي</span></button>
+  </nav>
+</div>
+
+<!-- ============ شاشة التسميع ============ -->
+<section id="reader" class="screen" hidden>
+  <header class="rbar">
+    <button class="icon" id="r-back" aria-label="رجوع"><svg><use href="#i-back"/></svg></button>
+    <div class="rtitle"><h2 id="r-title"></h2><p id="r-sub"></p></div>
+    <button class="icon" id="r-hide" aria-pressed="false" aria-label="إخفاء النص"><svg><use href="#i-eye"/></svg></button>
+    <button class="icon" data-act="settings" aria-label="الإعدادات"><svg><use href="#i-gear"/></svg></button>
+  </header>
+  <div class="pline" aria-hidden="true"><i id="r-prog"></i></div>
+  <article id="r-text" class="rtext"></article>
+  <footer class="dock">
+    <div class="dock-top">
+      <button class="icon sm" id="r-kbd" aria-label="التسميع بالكتابة"><svg><use href="#i-kbd"/></svg></button>
+      <div class="chips">
+        <span class="chip ok" title="صحيحة">صحيحة <b id="c-ok">٠</b></span>
+        <span class="chip err" title="أخطاء">أخطاء <b id="c-err">٠</b></span>
+        <span class="chip hint" title="تلميحات">تلميح <b id="c-hint">٠</b></span>
+      </div>
+      <button class="icon sm" id="r-reset" aria-label="إعادة من البداية"><svg><use href="#i-redo"/></svg></button>
+    </div>
+    <p class="heard" id="r-heard">اضغط الميكروفون وابدأ القراءة من حفظك</p>
+    <form id="r-type" class="typein" hidden>
+      <input id="r-typein" type="text" autocomplete="off" placeholder="اكتب ما تحفظه ثم اضغط إدخال" aria-label="اكتب من حفظك">
+      <button class="btn primary" type="submit">تحقّق</button>
+    </form>
+    <div class="controls">
+      <button class="ctl" id="r-hint"><svg><use href="#i-bulb"/></svg><span>تلميح</span></button>
+      <button class="mic" id="r-mic" aria-label="ابدأ التسميع"><svg><use href="#i-mic"/></svg></button>
+      <button class="ctl" id="r-finish"><svg><use href="#i-flag"/></svg><span>إنهاء</span></button>
+    </div>
+  </footer>
+</section>
+
+<!-- ============ صفحة الكتاب ============ -->
+<section id="bookview" class="screen" hidden>
+  <header class="rbar">
+    <button class="icon" id="bv-back" aria-label="رجوع"><svg><use href="#i-back"/></svg></button>
+    <div class="rtitle"><h2 id="bv-title"></h2><p id="bv-meta"></p></div>
+    <button class="icon" id="bv-del" aria-label="حذف الكتاب"><svg><use href="#i-trash"/></svg></button>
+  </header>
+  <div class="bv-body">
+    <div class="card setup">
+      <div class="range">
+        <label>من صفحة<input type="number" id="bv-from" min="1" inputmode="numeric"></label>
+        <label>إلى صفحة<input type="number" id="bv-to" min="1" inputmode="numeric"></label>
+        <label>لغة الكتاب<select id="bv-lang"><option value="ar-SA">العربية</option><option value="en-US">English</option></select></label>
+      </div>
+      <p class="note" id="bv-count"></p>
+      <button class="btn primary wide" id="bv-start"><svg><use href="#i-mic"/></svg>ابدأ تسميع هذه الصفحات</button>
+    </div>
+    <div class="tools">
+      <button class="btn ghost" id="bv-flip">النص معكوس؟ اقلبه</button>
+      <button class="btn ghost" id="bv-ocr">استخراج النص من الصفحات المصوّرة</button>
+    </div>
+    <div class="pvhead">
+      <button class="icon sm" id="bv-prev" aria-label="الصفحة السابقة"><svg><use href="#i-back"/></svg></button>
+      <h3>معاينة · صفحة <span id="bv-pg"></span></h3>
+      <button class="icon sm" id="bv-next" aria-label="الصفحة التالية"><svg style="transform:scaleX(-1)"><use href="#i-back"/></svg></button>
+      <button class="btn ghost sm" id="bv-edit">تعديل النص</button>
+    </div>
+    <div id="bv-preview" class="bookpage"></div>
+    <div id="bv-editwrap" hidden>
+      <textarea id="bv-editor" rows="12" dir="auto"></textarea>
+      <div class="row"><button class="btn primary" id="bv-save">حفظ</button><button class="btn ghost" id="bv-cancel">إلغاء</button></div>
+    </div>
+  </div>
+</section>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="scrim" data-close></div>
+  <div class="sheet-card" role="dialog" aria-modal="true"><div class="grab" aria-hidden="true"></div><div id="sheet-body"></div></div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/matcher.js"></script>
+<script src="js/asr.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
