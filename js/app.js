@@ -231,10 +231,10 @@
 
   // زر الرجوع في الجوال يغلق الشاشة المفتوحة بدل الخروج من التطبيق
   let navDepth = 0;
-  const topOpen = () => !$('#reader').hidden || !$('#bookview').hidden;
+  const topOpen = () => !$('#reader').hidden || !$('#bookview').hidden || !$('#admin').hidden;
   function pushNav() { try { history.pushState({ d: ++navDepth }, ''); } catch (e) { /* ignore */ } }
   function navBack() { if (navDepth > 0) history.back(); else closeTop(); }
-  function closeTop() { if (!$('#reader').hidden) closeReader(); else if (!$('#bookview').hidden) closeBook(); }
+  function closeTop() { if (!$('#reader').hidden) closeReader(); else if (!$('#admin').hidden) closeAdmin(); else if (!$('#bookview').hidden) closeBook(); }
   window.addEventListener('popstate', () => {
     if (!$('#sheet').hidden) { closeSheet(); if (topOpen()) { try { history.pushState({ d: navDepth }, ''); } catch (e) { /* ignore */ } } return; }
     navDepth = Math.max(0, navDepth - 1);
@@ -529,6 +529,7 @@
     if (!R.sid) R.sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     const rec = { id: R.sid, kind: R.kind, ref: R.ref, title: R.title, date: Date.now(), ok: st.ok, err: st.err, hint: st.hint, skip: st.skip, judged: st.judged, total: st.total, accuracy: st.accuracy, hidden: !!S.hidden, dur: R.t0 ? Math.round((Date.now() - R.t0) / 1000) : 0 };
     await DB.put('sessions', rec.id, rec);
+    if (window.Cloud && Cloud.user) Cloud.logSession(rec).catch((e) => console.warn('sync', e));
     SESS = null;
     return rec;
   }
@@ -1046,7 +1047,7 @@
   function openSettings() {
     const seg = (k, opts) => `<div class="seg" data-k="${k}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${S[k] === v}">${l}</button>`).join('')}</div>`;
     const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`).join('');
-    openSheet(`<h3>الإعدادات</h3><div class="set">
+    openSheet(`<h3>الإعدادات</h3><div class="set">${accountBlock()}
       <div class="field"><span>دقّة التصحيح <small>· المتساهلة تتجاوز عن أخطاء التعرّف الصوتي، والصارمة تدقّق أكثر</small></span>${seg('strict', [['low', 'متساهلة'], ['mid', 'متوسطة'], ['high', 'صارمة']])}</div>
       <label class="field"><span>حجم الخط: <b id="st-fv">${AR(S.font)}</b></span><input type="range" id="st-font" min="20" max="44" step="1" value="${S.font}"></label>
       <label class="field"><span>القارئ</span><select id="st-rec">${opt(RECITERS, S.reciter)}</select></label>
@@ -1122,6 +1123,242 @@
     }
   }
 
+
+  /* ================= الحسابات ================= */
+  const Cloud = window.Cloud;
+  const AUTH_ERR = {
+    'auth/invalid-email': 'البريد الإلكتروني غير صحيح.',
+    'auth/missing-email': 'اكتب بريدك الإلكتروني.',
+    'auth/missing-password': 'اكتب كلمة المرور.',
+    'auth/user-disabled': 'هذا الحساب موقوف. تواصل مع إدارة التطبيق.',
+    'auth/user-not-found': 'لا يوجد حساب بهذا البريد.',
+    'auth/wrong-password': 'البريد أو كلمة المرور غير صحيحة.',
+    'auth/invalid-credential': 'البريد أو كلمة المرور غير صحيحة.',
+    'auth/invalid-login-credentials': 'البريد أو كلمة المرور غير صحيحة.',
+    'auth/email-already-in-use': 'هذا البريد مسجّل من قبل. سجّل الدخول، أو استعد كلمة المرور.',
+    'auth/weak-password': 'كلمة المرور قصيرة: ٦ أحرف على الأقل.',
+    'auth/password-does-not-meet-requirements': 'كلمة المرور لا تستوفي الشروط المطلوبة.',
+    'auth/too-many-requests': 'محاولات كثيرة. انتظر قليلاً ثم أعد المحاولة.',
+    'auth/network-request-failed': 'لا يوجد اتصال بالإنترنت.',
+    'auth/operation-not-allowed': 'الدخول بالبريد غير مفعّل في مشروع Firebase (Authentication ← Sign-in method ← Email/Password).',
+    'auth/unauthorized-domain': 'هذا الموقع غير مضاف في Firebase (Authentication ← Settings ← Authorized domains).',
+    'permission-denied': 'لا تملك صلاحية لهذا الإجراء. تحقّق من قواعد Firestore.',
+    'sdk-load': 'تعذّر الاتصال بخدمة الحسابات. تحقّق من الإنترنت.',
+  };
+  const authErr = (e) => AUTH_ERR[(e && e.code) || ''] || 'حدث خطأ. أعد المحاولة.' + (e && e.code ? ` (${e.code})` : '');
+  let authMode = 'login';
+  const initials = (n, e) => esc((String(n || e || '؟').trim()[0] || '؟').toUpperCase());
+  const ago = (t) => {
+    if (!t) return '—';
+    const d = (Date.now() - t) / 1000;
+    if (d < 60) return 'الآن';
+    if (d < 3600) return `منذ ${AR(Math.floor(d / 60))} د`;
+    if (d < 86400) return `منذ ${AR(Math.floor(d / 3600))} س`;
+    if (d < 86400 * 30) return `منذ ${AR(Math.floor(d / 86400))} يوم`;
+    return new Date(t).toLocaleDateString('ar-u-nu-arab', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  function showAuth(view, data) {
+    const box = $('#auth-card');
+    $('#auth').hidden = false;
+    document.body.style.overflow = 'hidden';
+    data = data || {};
+    if (view === 'loading') {
+      box.innerHTML = '<p class="center note">جارٍ التحقق من حسابك…</p>';
+    } else if (view === 'form') {
+      const su = authMode === 'signup';
+      box.innerHTML = `<div class="seg"><button type="button" data-m="login" aria-pressed="${!su}">تسجيل الدخول</button><button type="button" data-m="signup" aria-pressed="${su}">حساب جديد</button></div>
+        <form id="auth-form" novalidate>
+          ${su ? '<label class="field"><span>الاسم</span><input type="text" name="name" autocomplete="name" required placeholder="اسمك كما يظهر للمدير"></label>' : ''}
+          <label class="field"><span>البريد الإلكتروني</span><input type="email" name="email" autocomplete="email" inputmode="email" required placeholder="name@example.com" value="${esc(data.email || '')}"></label>
+          <label class="field"><span>كلمة المرور</span><div class="pw"><input type="password" name="pass" autocomplete="${su ? 'new-password' : 'current-password'}" required minlength="6" placeholder="${su ? '٦ أحرف على الأقل' : ''}"><button type="button" id="pw-eye" aria-label="إظهار كلمة المرور"><svg><use href="#i-eye"/></svg></button></div></label>
+          <p class="auth-msg ${data.ok ? 'ok' : 'err'}" id="auth-msg" ${data.msg ? '' : 'hidden'}>${esc(data.msg || '')}</p>
+          <button class="btn primary wide" type="submit" id="auth-go">${su ? 'إنشاء الحساب' : 'دخول'}</button>
+          ${su ? '' : '<button type="button" class="linkbtn" id="auth-forgot">نسيت كلمة المرور؟</button>'}
+        </form>`;
+      $$('[data-m]', box).forEach((b) => { b.onclick = () => { authMode = b.dataset.m; showAuth('form', { email: $('#auth-form [name=email]').value }); }; });
+      $('#pw-eye').onclick = () => { const i = $('#auth-form [name=pass]'); i.type = i.type === 'password' ? 'text' : 'password'; };
+      const msg = (t, ok) => { const m = $('#auth-msg'); m.hidden = !t; m.textContent = t || ''; m.className = 'auth-msg ' + (ok ? 'ok' : 'err'); };
+      $('#auth-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const f = e.target, email = f.email.value.trim(), pass = f.pass.value, name = su ? f.name.value.trim() : '';
+        if (su && !name) { msg('اكتب اسمك.'); return; }
+        if (!email || !pass) { msg('اكتب البريد وكلمة المرور.'); return; }
+        const go = $('#auth-go'); go.disabled = true; msg('');
+        try { if (su) await Cloud.signUp(name, email, pass); else await Cloud.signIn(email, pass); }
+        catch (er) { msg(authErr(er)); go.disabled = false; }
+      };
+      const fg = $('#auth-forgot');
+      if (fg) fg.onclick = async () => {
+        const email = $('#auth-form [name=email]').value.trim();
+        if (!email) { msg('اكتب بريدك أولاً، ثم اضغط «نسيت كلمة المرور».'); return; }
+        try { await Cloud.reset(email); msg('أرسلنا رابط تعيين كلمة المرور إلى بريدك. افحص صندوق الوارد والرسائل غير المرغوبة.', true); }
+        catch (er) { msg(authErr(er)); }
+      };
+    } else if (view === 'verify') {
+      box.innerHTML = `<div class="big-ic"><svg><use href="#i-paste"/></svg></div>
+        <h2 class="center">فعّل بريدك الإلكتروني</h2>
+        <p class="center">أرسلنا رابط التفعيل إلى<br><b dir="ltr">${esc(data.email || '')}</b><br>افتح الرابط، ثم ارجع واضغط «تحقّقتُ».</p>
+        <p class="auth-msg err" id="auth-msg" hidden></p>
+        <div class="row"><button class="btn primary" id="v-done">تحقّقتُ، تابع</button><button class="btn ghost" id="v-resend">أعد الإرسال</button></div>
+        <button class="linkbtn" data-act="logout">الدخول بحساب آخر</button>`;
+      const msg = (t, ok) => { const m = $('#auth-msg'); m.hidden = !t; m.textContent = t; m.className = 'auth-msg ' + (ok ? 'ok' : 'err'); };
+      $('#v-done').onclick = async () => {
+        try { const u = await Cloud.reloadUser(); if (u.emailVerified) onUser(u); else msg('لم يُفعَّل البريد بعد. افتح الرابط في رسالتنا (وافحص الرسائل غير المرغوبة).'); }
+        catch (er) { msg(authErr(er)); }
+      };
+      $('#v-resend').onclick = async () => { try { await Cloud.resendVerify(); msg('أُعيد إرسال الرابط.', true); } catch (er) { msg(authErr(er)); } };
+    } else if (view === 'blocked') {
+      box.innerHTML = `<div class="big-ic bad"><svg><use href="#i-logout"/></svg></div>
+        <h2 class="center">الحساب موقوف</h2><p class="center">أوقفت الإدارة هذا الحساب. تواصل مع إدارة التطبيق لإعادة تفعيله.</p>
+        <button class="btn ghost wide" data-act="logout">تسجيل الخروج</button>`;
+    } else if (view === 'error') {
+      box.innerHTML = `<h2 class="center">تعذّر الاتصال</h2><p class="center">${esc(data.msg || '')}</p><button class="btn primary wide" id="a-retry">أعد المحاولة</button>`;
+      $('#a-retry').onclick = () => location.reload();
+    }
+  }
+  function hideAuth() { $('#auth').hidden = true; if (!topOpen()) document.body.style.overflow = ''; }
+  function setAdminUI() { $$('.admin-only').forEach((el) => { el.hidden = !(Cloud && Cloud.isAdmin); }); }
+
+  async function onUser(u) {
+    setAdminUI();
+    if (!u) {
+      store.set('lastUser', null);
+      if (Cloud.requireLogin) { authMode = authMode || 'login'; showAuth('form'); } else hideAuth();
+      return;
+    }
+    if (Cloud.requireVerified && !u.emailVerified) { showAuth('verify', { email: u.email }); return; }
+    try {
+      const p = await Cloud.ensureProfile(u);
+      store.set('lastUser', { uid: u.uid, email: u.email, name: p.name || u.displayName || '', status: p.status, role: p.role });
+    } catch (e) {
+      // دون اتصال: نعتمد آخر حالة معروفة لهذا المستخدم
+      const last = store.get('lastUser', null);
+      if (!(last && last.uid === u.uid)) { console.warn(e); }
+      else Cloud.profile = Object.assign({ uid: u.uid }, last);
+    }
+    if (Cloud.profile && Cloud.profile.status === 'blocked') { showAuth('blocked'); return; }
+    setAdminUI();
+    hideAuth();
+  }
+  async function doLogout() {
+    closeSheet();
+    if (!$('#admin').hidden) closeAdmin();
+    try { await Cloud.signOut(); } catch (e) { /* ignore */ }
+    authMode = 'login';
+  }
+  function initAuth() {
+    if (!Cloud || !Cloud.configured) return;
+    const last = store.get('lastUser', null);
+    if (Cloud.requireLogin && !last) showAuth('loading');
+    Cloud.onChange(onUser).catch((e) => {
+      // تعذّر تحميل خدمة الحسابات (غالباً دون اتصال): من سجّل دخوله سابقاً يتابع، وغيره ينتظر الاتصال
+      if (last && last.status !== 'blocked') { hideAuth(); return; }
+      if (Cloud.requireLogin) showAuth('error', { msg: authErr(e) });
+    });
+  }
+  function accountBlock() {
+    if (!Cloud || !Cloud.configured) return '';
+    const u = Cloud.user;
+    if (!u) return `<div class="acct"><div class="avatar">؟</div><div style="flex:1"><b>لم تسجّل الدخول</b><span>سجّل الدخول ليُحفظ تقدّمك في حسابك</span></div><button class="btn ghost sm" type="button" id="acct-login">دخول</button></div>`;
+    const p = Cloud.profile || {};
+    setTimeout(() => { const b = $('#acct-login'); if (b) b.onclick = () => { closeSheet(); showAuth('form'); }; }, 0);
+    return `<div class="acct"><div class="avatar">${initials(p.name || u.displayName, u.email)}</div>
+      <div style="flex:1;min-width:0"><b>${esc(p.name || u.displayName || 'مستخدم')}${Cloud.isAdmin ? '<span class="role">مدير</span>' : ''}</b><span dir="ltr">${esc(u.email)}</span></div></div>
+      <div class="row" style="margin-top:0">${Cloud.isAdmin ? '<button class="btn ghost sm" type="button" data-act="admin"><svg><use href="#i-users"/></svg>إدارة المستخدمين</button>' : ''}<button class="btn ghost sm" type="button" data-act="logout"><svg><use href="#i-logout"/></svg>تسجيل الخروج</button></div>`;
+  }
+
+  /* ================= لوحة إدارة المستخدمين ================= */
+  const ADM = { users: [], filter: 'all' };
+  async function openAdmin() {
+    if (!Cloud || !Cloud.isAdmin) { toast('هذه الصفحة للمدير فقط'); return; }
+    closeSheet();
+    $('#admin').hidden = false;
+    document.body.style.overflow = 'hidden';
+    pushNav();
+    await loadAdmin();
+  }
+  function closeAdmin() { $('#admin').hidden = true; if (!topOpen()) document.body.style.overflow = ''; }
+  async function loadAdmin() {
+    $('#adm-list').innerHTML = '<li class="empty">جارٍ تحميل المستخدمين…</li>';
+    try { ADM.users = await Cloud.listUsers(); renderAdmin(); }
+    catch (e) { console.error(e); $('#adm-list').innerHTML = `<li class="empty">${esc(authErr(e))}</li>`; }
+  }
+  const isAdminUser = (x) => x.role === 'admin' || Cloud.isAdminEmail(x.email);
+  function renderAdmin() {
+    const us = ADM.users;
+    const week = Date.now() - 7 * 86400000;
+    const active = us.filter((x) => Cloud.ms(x.lastActive) > week).length;
+    const blocked = us.filter((x) => x.status === 'blocked').length;
+    $('#adm-sub').textContent = `${AR(us.length)} مستخدم`;
+    $('#adm-stats').innerHTML = [[us.length, 'المستخدمون'], [active, 'نشطون هذا الأسبوع'], [blocked, 'موقوفون'], [us.reduce((a, x) => a + (x.words || 0), 0), 'كلمة سُمّعت']]
+      .map(([v, l]) => `<div class="stat"><b>${AR(v)}</b><span>${l}</span></div>`).join('');
+    const q = $('#adm-q').value.trim().toLowerCase();
+    const list = us.filter((x) => {
+      if (ADM.filter === 'active' && x.status === 'blocked') return false;
+      if (ADM.filter === 'blocked' && x.status !== 'blocked') return false;
+      if (ADM.filter === 'admin' && !isAdminUser(x)) return false;
+      return !q || String(x.name || '').toLowerCase().includes(q) || String(x.email || '').toLowerCase().includes(q);
+    });
+    $('#adm-list').innerHTML = list.length ? list.map((x) => {
+      const acc = x.words ? Math.round(((x.ok || 0) / x.words) * 100) : 0;
+      return `<li><button class="urow" data-uid="${esc(x.uid)}"><span class="avatar">${initials(x.name, x.email)}</span>
+        <span class="who"><b>${esc(x.name || 'بلا اسم')}${x.status === 'blocked' ? '<span class="tag blocked">موقوف</span>' : ''}${isAdminUser(x) ? '<span class="tag admin">مدير</span>' : ''}</b>
+        <span class="mail">${esc(x.email || '')}</span><span class="meta">آخر نشاط: ${esc(ago(Cloud.ms(x.lastActive)))}</span></span>
+        <span class="num-r"><b>${AR(x.sessions || 0)}</b><br>جلسة</span><span class="num-r"><b>${x.words ? AR(acc) + '٪' : '—'}</b><br>الدقة</span></button></li>`;
+    }).join('') : '<li class="empty">لا يوجد مستخدمون مطابقون</li>';
+  }
+  async function userSheet(uid) {
+    const x = ADM.users.find((u) => u.uid === uid);
+    if (!x) return;
+    const me = Cloud.user && Cloud.user.uid === uid;
+    const acc = x.words ? Math.round(((x.ok || 0) / x.words) * 100) : 0;
+    const blocked = x.status === 'blocked';
+    const admin = x.role === 'admin';
+    openSheet(`<div class="acct"><div class="avatar">${initials(x.name, x.email)}</div><div style="flex:1;min-width:0"><b>${esc(x.name || 'بلا اسم')}</b><span dir="ltr">${esc(x.email || '')}</span></div></div>
+      <dl class="kv">
+        <dt>الحالة</dt><dd>${blocked ? '<span class="tag blocked" style="margin:0">موقوف</span>' : 'نشط'}${isAdminUser(x) ? ' · مدير' : ''}</dd>
+        <dt>تاريخ التسجيل</dt><dd>${esc(ago(Cloud.ms(x.createdAt)))}</dd>
+        <dt>آخر دخول</dt><dd>${esc(ago(Cloud.ms(x.lastLogin)))}</dd>
+        <dt>الجلسات</dt><dd>${AR(x.sessions || 0)} جلسة · ${AR(x.words || 0)} كلمة · دقة ${AR(acc)}٪</dd>
+      </dl>
+      <h3 style="font-size:16px">آخر الجلسات</h3><ul class="hist" id="u-sess"><li><span class="note">جارٍ التحميل…</span></li></ul>
+      ${me ? '<p class="note">هذا حسابك.</p>' : `<div class="row">
+        <button class="btn ${blocked ? 'primary' : 'danger'}" id="u-block">${blocked ? 'إعادة تفعيل الحساب' : 'إيقاف الحساب'}</button>
+        <button class="btn ghost" id="u-role">${admin ? 'إزالة صلاحية المدير' : 'جعله مديراً'}</button></div>`}
+      <p class="note">لحذف الحساب نهائياً أو تغيير كلمة مروره: Firebase console ← Authentication ← Users.</p>`);
+    if (!me) {
+      $('#u-block').onclick = async () => {
+        try { await Cloud.setStatus(uid, blocked ? 'active' : 'blocked'); x.status = blocked ? 'active' : 'blocked'; toast(blocked ? 'أُعيد تفعيل الحساب' : 'أُوقف الحساب'); renderAdmin(); userSheet(uid); }
+        catch (e) { toast(authErr(e), 4000); }
+      };
+      $('#u-role').onclick = async () => {
+        try { await Cloud.setRole(uid, admin ? 'user' : 'admin'); x.role = admin ? 'user' : 'admin'; toast(admin ? 'أُزيلت صلاحية المدير' : 'أصبح مديراً'); renderAdmin(); userSheet(uid); }
+        catch (e) { toast(authErr(e), 4000); }
+      };
+    }
+    try {
+      const ss = await Cloud.userSessions(uid);
+      const ul = $('#u-sess');
+      if (!ul) return;
+      ul.innerHTML = ss.length ? ss.map((r) => `<li><span class="acc ${r.accuracy >= 90 ? 'g' : r.accuracy >= 70 ? 'm' : 'b'}">${AR(r.accuracy || 0)}٪</span><div><b>${esc(r.title || '')}</b><span>${esc(ago(Cloud.ms(r.date)))} · ${AR(r.judged || 0)} كلمة${r.err ? ' · ' + AR(r.err) + ' أخطاء' : ''}</span></div></li>`).join('')
+        : '<li><span class="note">لا توجد جلسات بعد.</span></li>';
+    } catch (e) { const ul = $('#u-sess'); if (ul) ul.innerHTML = `<li><span class="note">${esc(authErr(e))}</span></li>`; }
+  }
+  function exportCSV() {
+    const rows = [['الاسم', 'البريد', 'الحالة', 'الدور', 'تاريخ التسجيل', 'آخر نشاط', 'الجلسات', 'الكلمات', 'الدقة %']];
+    for (const x of ADM.users) {
+      rows.push([x.name || '', x.email || '', x.status || '', isAdminUser(x) ? 'admin' : 'user', new Date(Cloud.ms(x.createdAt) || 0).toISOString().slice(0, 10),
+        new Date(Cloud.ms(x.lastActive) || 0).toISOString().slice(0, 10), x.sessions || 0, x.words || 0, x.words ? Math.round(((x.ok || 0) / x.words) * 100) : 0]);
+    }
+    const csv = '﻿' + rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `tasmee-users-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
   /* ================= الربط ================= */
   function bind() {
     document.addEventListener('click', (e) => {
@@ -1132,6 +1369,8 @@
         else if (act === 'vsearch') openVoiceSearch();
         else if (act === 'go-books') go('books');
         else if (act === 'paste') openPaste();
+        else if (act === 'admin') openAdmin();
+        else if (act === 'logout') doLogout();
         return;
       }
       const g = e.target.closest('[data-go]');
@@ -1185,6 +1424,20 @@
     });
     $('#bv-start').onclick = () => { const { from, to } = bvRange(); openBookReader(BV.book.id, { from, to }); };
 
+    // إدارة المستخدمين
+    $('#adm-back').onclick = navBack;
+    $('#adm-refresh').onclick = loadAdmin;
+    $('#adm-csv').onclick = exportCSV;
+    $('#adm-q').addEventListener('input', renderAdmin);
+    $('#adm-filter').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-f]');
+      if (!b) return;
+      ADM.filter = b.dataset.f;
+      $$('#adm-filter [data-f]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      renderAdmin();
+    });
+    $('#adm-list').addEventListener('click', (e) => { const b = e.target.closest('[data-uid]'); if (b) userSheet(b.dataset.uid); });
+
     // شاشة التسميع
     $('#r-back').onclick = navBack;
     $('#r-mic').onclick = () => { if (R.listener) stopListening(); else startListening(); };
@@ -1211,6 +1464,7 @@
     if (window.__ASR_LIB) window.ASR.LocalEngine.lib = window.__ASR_LIB;
     applySettings();
     bind();
+    initAuth();
     loadSurahs();
     renderContinue();
     refreshMemo();
@@ -1226,7 +1480,7 @@
       });
       window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
     }
-    window.__tasmee = { R, S, DB, loadPdfjs, renderPage, flipText, looksReversed };
+    window.__tasmee = { R, S, DB, loadPdfjs, renderPage, flipText, looksReversed, Cloud: window.Cloud };
   }
   init();
 })();

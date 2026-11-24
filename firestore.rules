@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// قواعد الحماية لقاعدة بيانات «تسميع» في Firebase Firestore
+// ضع بريد المدير بدل you@example.com (بأحرف صغيرة)، ثم الصق الملف كاملاً في:
+// Firebase console ← Firestore Database ← Rules ← Publish
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function profile(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
+    function isAdmin() {
+      return signedIn() && (
+        (request.auth.token.email.lower() in ['you@example.com'] && request.auth.token.email_verified == true)
+        || profile(request.auth.uid).role == 'admin'
+      );
+    }
+
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+
+      // ينشئ المستخدم ملفه أول مرة: دور «مستخدم» وحالة «نشط» فقط
+      allow create: if isSelf(uid)
+        && request.resource.data.role == 'user'
+        && request.resource.data.status == 'active'
+        && request.resource.data.email == request.auth.token.email;
+
+      // المستخدم يعدّل بياناته العادية فقط، ولا يغيّر دوره أو حالته؛ والمدير يعدّل كل شيء
+      allow update: if (isSelf(uid)
+          && resource.data.status != 'blocked'
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status', 'email', 'createdAt']))
+        || isAdmin();
+
+      allow delete: if isAdmin();
+
+      // سجلّ جلسات التسميع
+      match /sessions/{sid} {
+        allow read: if isSelf(uid) || isAdmin();
+        allow create, update: if isSelf(uid) && profile(uid).status != 'blocked';
+        allow delete: if isAdmin();
+      }
+    }
+  }
+}

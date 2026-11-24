@@ -1,7 +1,7 @@
 /* عامل الخدمة: يجعل التطبيق يعمل دون اتصال بعد أول فتح */
-const VERSION = 'tasmee-v5';
+const VERSION = 'tasmee-v6';
 const SHELL = [
-  './', 'index.html', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 const RUNTIME = 'tasmee-runtime';
@@ -25,8 +25,14 @@ self.addEventListener('fetch', (e) => {
   // نص المصحف يُحفظ في IndexedDB، والتلاوات تُبثّ مباشرةً
   if (url.hostname === 'api.alquran.cloud' || url.hostname === 'cdn.islamic.network') return;
   const sameOrigin = url.origin === self.location.origin;
-  const cacheable = sameOrigin || /(^|\.)fonts\.(googleapis|gstatic)\.com$/.test(url.hostname) || url.hostname === 'cdn.jsdelivr.net';
+  const cacheable = sameOrigin || /(^|\.)fonts\.(googleapis|gstatic)\.com$/.test(url.hostname) || url.hostname === 'cdn.jsdelivr.net' || (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/'));
   if (!cacheable) return;
+
+  // ملف الإعدادات: من الشبكة أولاً كي يظهر أثر تعديله فوراً
+  if (sameOrigin && url.pathname.endsWith('/config.js')) {
+    e.respondWith(fetch(req).then((res) => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); } return res; }).catch(() => caches.match(req, { ignoreSearch: true })));
+    return;
+  }
 
   // الأحدث أولاً مع الرجوع للنسخة المحفوظة (stale-while-revalidate)
   e.respondWith((async () => {
