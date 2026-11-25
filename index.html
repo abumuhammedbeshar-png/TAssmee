@@ -107,7 +107,11 @@
           <span>أو اسحبه وأفلته هنا · يبقى الملف على جهازك فقط</span>
         </label>
         <div id="pdf-prog" class="prog" hidden><div class="bar"><i></i></div><span></span></div>
-        <button class="btn ghost wide" data-act="paste"><svg><use href="#i-paste"/></svg>أو الصق نصاً مباشرةً</button>
+        <div class="row" style="margin-top:0">
+          <button class="btn ghost" data-act="paste"><svg><use href="#i-paste"/></svg>الصق نصاً</button>
+          <button class="btn ghost" data-act="txt"><svg><use href="#i-upload"/></svg>استورد ملف نصّي</button>
+        </div>
+        <input type="file" id="txt-in" accept=".txt,.md,text/plain" hidden>
         <h2 class="sec">مكتبتي</h2>
         <div id="books" class="books"></div>
       </div>

@@ -42,4 +42,29 @@ t('reversed detection still works', () => {
   const s = 'ذهب الطالب إلى المدرسة في الصباح وكان من أوائل الحاضرين على الدرس هذا اليوم في الفصل';
   assert.deepStrictEqual([P.looksReversed([s]), P.looksReversed([P.flipText(s)])], [false, true]);
 });
+
+t('spots unreadable OCR output', () => {
+  // ما أخرجه التعرّف الضوئي من كتاب مصوَّر بخط مزخرف (الحالة الحقيقية)
+  const junk1 = 'و ا\n2 يدا حال ليطاص\nو ان\n0 1 2\n2 مسدنم 8\nلن دسل ال اا م 0\n١ يُقول راي تَحْمَدَالعفُورٍ دوؤماسلمان.\nهوالجروريب\n8\n3 ووم مصداه الى ضاحكهة رحأ\n3 الحَمْدِلِلَهِ ملاع محَمَدٍوَالِوِوَمَنْ كلا 0\n5 2\n21 مم 40 رثا ار 5 الم انر عأأ\nلل 0\n7 5 اال 0 8';
+  const junk2 = 'اط رااان م يكو راج يَحْمةَلهَمْر وَوْما سيان هْوَالحْوري ١ الحَمدي مس 0 ا 0 بسطتنات ل ال';
+  assert.strictEqual(P.looksReadable(junk1), false);
+  assert.strictEqual(P.looksReadable(junk2), false); // حروف مفردة متناثرة
+});
+
+t('accepts real book text', () => {
+  const good1 = 'منصة معارف التعليمية نبذه عن دورة مراحل إنتاج الفسائل النسيجية مقدمة الدورة الفريوز للخدمات العلمية الدقيقة لتقنية زراعة الأنسجة النباتية';
+  const good2 = 'العلم نور يضيء طريق الإنسان في الحياة ومن طلب العلم وجد في طلبه لذة لا تعدلها لذة الصبر مفتاح الفرج والعمل الدائم وإن قل خير من الكثير المنقطع';
+  const good3 = 'يقول راجي رحمة الغفور دوما سليمان هو الجمزوري الحمد لله مصليا على محمد وآله ومن تلا وبعد هذا النظم للمريد في النون والتنوين والمدود';
+  assert.strictEqual(P.looksReadable(good1), true);
+  assert.strictEqual(P.looksReadable(good2), true);
+  assert.strictEqual(P.looksReadable(good3), true);
+});
+
+t('readableRatio ignores blank pages', () => {
+  const good = 'العلم نور يضيء طريق الإنسان في الحياة ومن طلب العلم وجد في طلبه لذة لا تعدلها';
+  assert.strictEqual(P.readableRatio(['', '   ', good]), 1);
+  assert.strictEqual(P.readableRatio(['', '0 1 2 و ا 8 مسدنم لن دسل ال اا م 0 رثا ار الم انر عأأ']), 0);
+  assert.strictEqual(P.readableRatio([]), 0);
+});
+
 console.log(`\n${pass} passed`);

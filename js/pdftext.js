@@ -205,6 +205,25 @@
     return score(a) >= score(b) ? a : b; // عند التساوي: ترتيب الملف نفسه (أسلم مع الأعمدة)
   }
 
+  /**
+   * هل النصّ المستخرج مفهوم؟ المسح الضوئي الرديء يعطي حروفاً وأرقاماً متناثرة بلا كلمات عربية حقيقية.
+   */
+  function looksReadable(t) {
+    const ws = M.words(t);
+    if (ws.length < 8) return false;
+    const ar = ws.filter((w) => AR.test(w));
+    if (ar.length < ws.length * 0.75) return false;      // أرقام وحروف متناثرة أكثر من الكلمات العربية
+    // الحروف المفردة أقوى علامة على مسح رديء؛ العربية الحقيقية تكاد تخلو منها
+    const single = ar.filter((w) => w.length === 1).length / ar.length;
+    const tiny = ar.filter((w) => w.length <= 2).length / ar.length;
+    return single <= 0.08 && tiny <= 0.45;
+  }
+  const readableRatio = (pages) => {
+    const withText = pages.filter(hasText);
+    if (!withText.length) return 0;
+    return withText.filter(looksReadable).length / withText.length;
+  };
+
   const flipLine = (l) => (l.match(/\P{M}\p{M}*/gu) || []).reverse().join('');
   const flipText = (t) => t.split('\n').map(flipLine).join('\n');
   function looksReversed(pages) {
@@ -219,7 +238,7 @@
   }
   const hasText = (t) => String(t || '').replace(/\s/g, '').length >= 10;
 
-  const api = { pageText, streamText, geomText, repairForms, repairBase, brokenRatio, score, cleanText, flipText, looksReversed, detectLang, hasText };
+  const api = { pageText, looksReadable, readableRatio, streamText, geomText, repairForms, repairBase, brokenRatio, score, cleanText, flipText, looksReversed, detectLang, hasText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PdfText = api;
 })(typeof window !== 'undefined' ? window : globalThis);

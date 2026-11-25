@@ -824,7 +824,7 @@
     });
   }
   // استخراج النص وإصلاح تقطيع الكلمات العربية: js/pdftext.js
-  const { pageText, cleanText, flipText, looksReversed, detectLang, hasText, repairBase } = window.PdfText;
+  const { pageText, cleanText, flipText, looksReversed, detectLang, hasText, repairBase, looksReadable, readableRatio } = window.PdfText;
   const XV = 2; // إصدار طريقة الاستخراج؛ الكتب الأقدم تُعاد معالجتها تلقائياً
 
   async function extractPages(buf, onProg) {
@@ -1009,6 +1009,28 @@
     DB.put('books', b.id, b);
     openReader({ kind: 'book', ref: b.id, title: b.name, sub: from === to ? `صفحة ${AR(from)}` : `الصفحات ${AR(from)}–${AR(to)}`, blocks, lang: b.lang, pos: o.pos || 0, restore: o.restore, extra: { from, to }, dir: b.lang === 'en-US' ? 'ltr' : 'rtl' });
   }
+  /** تحسين الصورة قبل التعرّف: تدرّج رمادي ثم مدّ التباين */
+  function prepCanvas(c) {
+    const ctx = c.getContext('2d');
+    let im;
+    try { im = ctx.getImageData(0, 0, c.width, c.height); } catch (e) { return; }
+    const d = im.data;
+    let lo = 255, hi = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+      d[i] = d[i + 1] = d[i + 2] = g;
+      if (g < lo) lo = g;
+      if (g > hi) hi = g;
+    }
+    if (hi - lo > 30 && hi - lo < 250) {
+      const k = 255 / (hi - lo);
+      for (let i = 0; i < d.length; i += 4) {
+        const v = Math.max(0, Math.min(255, ((d[i] - lo) * k) | 0));
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+    }
+    ctx.putImageData(im, 0, 0);
+  }
   async function renderPage(doc, p, scale) {
     const page = await doc.getPage(p);
     const vp = page.getViewport({ scale });
@@ -1031,6 +1053,7 @@
     if (!blob) { toast('ملف PDF الأصلي غير محفوظ؛ ارفع الكتاب مرة أخرى'); return; }
     const btn = $('#bv-ocr');
     btn.disabled = true;
+    const out = {};
     let worker = null, task = null;
     try {
       btn.textContent = 'جارٍ تجهيز الصفحات…';
@@ -1043,13 +1066,16 @@
       let k = 0;
       for (const p of targets) {
         btn.textContent = `التعرّف على صفحة ${AR(p)} (${AR(++k)} من ${AR(targets.length)})…`;
-        const canvas = await renderPage(doc, p, 2);
+        const pg0 = await doc.getPage(p);
+        const w0 = pg0.getViewport({ scale: 1 }).width;
+        pg0.cleanup();
+        const scale = clamp(2200 / (w0 || 600), 1.5, 4); // التعرّف الضوئي يحتاج صورة كبيرة
+        const canvas = await renderPage(doc, p, scale);
+        prepCanvas(canvas);
         const r = await worker.recognize(canvas);
-        b.pages[p - 1] = repairBase(cleanText(r.data.text));
-        markManual(b, p);
+        out[p] = repairBase(cleanText(r.data.text));
       }
-      await DB.put('books', b.id, b);
-      toast('تم استخراج النص. راجعه وعدّل ما يلزم قبل التسميع.', 4000);
+      await reviewOCR(b, out);
     } catch (e) {
       console.error(e);
       toast('تعذّر التعرّف الضوئي. تحقّق من اتصالك بالإنترنت ثم أعد المحاولة.', 4500);
@@ -1059,6 +1085,69 @@
     btn.disabled = false;
     renderBV();
   }
+  /** يعرض ما قرأه التعرّف الضوئي ليقرّر المستخدم حفظه أو رفضه */
+  async function reviewOCR(b, out) {
+    const pages = Object.keys(out).map(Number).sort((x, y) => x - y);
+    const texts = pages.map((p) => out[p]);
+    const got = texts.filter(hasText);
+    if (!got.length) {
+      openSheet(`<h3>تعذّرت قراءة الصفحات</h3>
+        <p>لم نستطع قراءة أي نص من هذه الصفحات. غالباً الصور منخفضة الجودة.</p>${ocrTips()}`);
+      bindOcrTips();
+      return;
+    }
+    const ok = readableRatio(texts) >= 0.5;
+    const sample = (got.find(looksReadable) || got[0]).slice(0, 600);
+    openSheet(`<h3>${ok ? 'راجع النص المستخرج' : 'النص المستخرج غير مفهوم'}</h3>
+      <p class="note">قرأنا ${AR(got.length)} من ${AR(pages.length)} صفحة. هذا نموذج مما قرأناه:</p>
+      <div class="bookpage" dir="auto" style="max-height:34vh;overflow:auto;font-size:16px">${esc(sample)}</div>
+      ${ok ? '<p class="note">إن كان مطابقاً للكتاب فاحفظه، وعدّل ما يلزم من «تعديل النص».</p>'
+           : `<p class="note">الحروف متناثرة وغير مطابقة للكتاب، فلا ينفع للتسميع.</p>${ocrTips()}`}
+      <div class="row">${ok ? '<button class="btn primary" id="oc-save">احفظ النص</button>' : '<button class="btn ghost" id="oc-save">احفظه على أي حال</button>'}
+        <button class="btn ghost" id="oc-drop">تجاهل</button></div>`);
+    bindOcrTips();
+    $('#oc-drop').onclick = closeSheet;
+    $('#oc-save').onclick = async () => {
+      for (const p of pages) { if (hasText(out[p])) { b.pages[p - 1] = out[p]; markManual(b, p); } }
+      await DB.put('books', b.id, b);
+      closeSheet(); renderBV();
+      toast('حُفظ النص. راجعه وعدّل ما يلزم قبل التسميع.', 4000);
+    };
+  }
+  const ocrTips = () => `<p class="note"><b>الأفضل لهذا الكتاب:</b></p>
+    <ul class="note" style="margin:0;padding-inline-start:20px">
+      <li>انسخ نص الكتاب من الإنترنت إن كان متوفراً، والصقه هنا.</li>
+      <li>أو استخدم «عدسة Google» على صور الكتاب، فهي أدقّ بكثير مع الخطوط المزخرفة، ثم الصق ما تقرؤه.</li>
+      <li>أو ابحث عن نسخة PDF نصّية من الكتاب بدل المصوّرة.</li>
+    </ul>
+    <div class="row"><button class="btn primary" id="oc-paste"><svg><use href="#i-paste"/></svg>الصق نصاً الآن</button></div>`;
+  function bindOcrTips() { const b = $('#oc-paste'); if (b) b.onclick = () => { closeSheet(); openPaste(); }; }
+
+  /** استيراد ملف نصّي (.txt) — يكتشف ترميز ويندوز العربي تلقائياً */
+  async function importTxt(file) {
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      let text = new TextDecoder('utf-8').decode(buf);
+      if (/\uFFFD/.test(text)) {
+        try { text = new TextDecoder('windows-1256').decode(buf); } catch (e) { /* ignore */ }
+      }
+      text = cleanText(text);
+      if (M.words(text).length < 2) { toast('الملف فارغ أو غير مقروء'); return; }
+      await addTextBook(file.name.replace(/\.(txt|md)$/i, ''), text);
+    } catch (e) { console.error(e); toast('تعذّرت قراءة الملف'); }
+    $('#txt-in').value = '';
+  }
+  async function addTextBook(name, text) {
+    const pages = paginate(text, 220);
+    const id = 'b' + Date.now().toString(36);
+    const book = { id, name: name || 'نص', pageCount: pages.length, pages, lang: detectLang(text), created: Date.now(), from: 1, to: Math.min(pages.length, 3), pasted: true, xv: XV };
+    await DB.put('books', id, book);
+    renderBooks();
+    openBook(id);
+    return book;
+  }
+
   function openPaste() {
     openSheet(`<h3>الصق نصاً للتسميع</h3>
       <div class="set">
@@ -1068,12 +1157,10 @@
       <div class="row"><button class="btn primary" id="p-save">حفظ وفتح</button></div>`);
     $('#p-save').onclick = async () => {
       const text = cleanText($('#p-text').value);
+      const name = $('#p-name').value.trim() || 'نص ملصق';
       if (M.words(text).length < 2) { toast('النص قصير جداً'); return; }
-      const pages = paginate(text, 220);
-      const id = 'b' + Date.now().toString(36);
-      const book = { id, name: $('#p-name').value.trim() || 'نص ملصق', pageCount: pages.length, pages, lang: detectLang(text), created: Date.now(), from: 1, to: Math.min(pages.length, 3), pasted: true };
-      await DB.put('books', id, book);
-      closeSheet(); renderBooks(); openBook(id);
+      closeSheet();
+      await addTextBook(name, text);
     };
   }
   function confirmSheet(title, text, okLabel, onOk) {
@@ -1490,6 +1577,7 @@
         else if (act === 'vsearch') openVoiceSearch();
         else if (act === 'go-books') go('books');
         else if (act === 'paste') openPaste();
+        else if (act === 'txt') $('#txt-in').click();
         else if (act === 'admin') openAdmin();
         else if (act === 'logout') doLogout();
         return;
@@ -1507,6 +1595,7 @@
 
     // الكتب
     $('#pdf-in').addEventListener('change', (e) => importPdf(e.target.files[0]));
+    $('#txt-in').addEventListener('change', (e) => importTxt(e.target.files[0]));
     const drop = $('#drop');
     drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('over'));
