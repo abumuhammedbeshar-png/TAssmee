@@ -173,6 +173,32 @@ t('words split into 2–3 pieces by a PDF still match', () => {
   assert.strictEqual(s3.stats().err, 0); assert.ok(s3.done);
 });
 
+t('a poorly heard phrase does not accuse the reciter of mistakes', () => {
+  const s = mk(FATIHA);
+  // التعرّف سمع كلاماً بعيداً عن النص: لا تُحتسب أخطاء
+  s.feed('بسم الله الرحمن الرحيم');
+  s.feed('الحمد شيء آخر تماما لا يشبه');
+  const st = s.stats();
+  assert.strictEqual(st.err, 0, JSON.stringify(s.state));
+  assert.ok(s.state.slice(5, 8).every((x) => x === 'skip' || x === 'p'), JSON.stringify(s.state));
+});
+
+t('low recogniser confidence never marks errors', () => {
+  const s = mk(FATIHA);
+  s.feed('بسم الله الرحمن الرحيم الحمد لله رب الناس الرحمن', { conf: 0.3 });
+  assert.strictEqual(s.stats().err, 0);
+  const s2 = mk(FATIHA);
+  s2.feed('بسم الله الرحمن الرحيم الحمد لله رب الناس الرحمن', { conf: 0.95 });
+  assert.strictEqual(s2.stats().err, 1);
+});
+
+t('a single wrong word in a good phrase is still flagged', () => {
+  const s = mk(FATIHA);
+  s.feed('بسم الله الرحمن الرحيم الحمد لله رب الناس الرحمن الرحيم مالك');
+  assert.strictEqual(s.state[7], 'err');
+  assert.strictEqual(s.heard[7], 'الناس');
+});
+
 t('English book text works too', () => {
   const s = mk('The quick brown fox jumps over the lazy dog.');
   s.feed('the quick brown fox'); s.feed('jumps over a lazy dog');

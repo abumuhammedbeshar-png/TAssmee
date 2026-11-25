@@ -198,11 +198,33 @@
     return commonScore(t) * 3 - bad * 4 + ar * 0.02;
   }
 
+  /**
+   * هل يخزّن الملف كلمات السطر بترتيب العرض (من اليسار) بدل الترتيب المنطقي؟
+   * عندها يأتي النص مقلوباً، ولا يكشفه وزن الكلمات لأنه لا يتأثر بالترتيب.
+   */
+  function streamIsVisual(items) {
+    let inc = 0, dec = 0, prev = null, ar = 0, la = 0;
+    for (const it of items) {
+      if (typeof it.str !== 'string' || !it.str.trim() || !it.transform) continue;
+      ar += (it.str.match(RTL_CH) || []).length;
+      la += (it.str.match(LTR_CH) || []).length;
+      const x = it.transform[4], y = it.transform[5];
+      const h = Math.abs(it.transform[3]) || 10;
+      if (prev && Math.abs(prev.y - y) < h * 0.5) {
+        if (x > prev.x + 1) inc++;
+        else if (x < prev.x - 1) dec++;
+      }
+      prev = { x, y };
+    }
+    return ar > la && inc >= 3 && inc > dec * 2;
+  }
+
   /** نص صفحة واحدة من عناصر pdf.js: أفضل الطريقتين بعد الإصلاح */
   function pageText(items) {
-    const a = repairBase(cleanText(streamText(items)));
     const b = repairBase(cleanText(geomText(items)));
-    return score(a) >= score(b) ? a : b; // عند التساوي: ترتيب الملف نفسه (أسلم مع الأعمدة)
+    if (streamIsVisual(items)) return b;          // الترتيب المنطقي يُبنى من مواضع الكلمات
+    const a = repairBase(cleanText(streamText(items)));
+    return score(a) >= score(b) ? a : b;          // عند التساوي: ترتيب الملف نفسه (أسلم مع الأعمدة)
   }
 
   /**
@@ -238,7 +260,7 @@
   }
   const hasText = (t) => String(t || '').replace(/\s/g, '').length >= 10;
 
-  const api = { pageText, looksReadable, readableRatio, streamText, geomText, repairForms, repairBase, brokenRatio, score, cleanText, flipText, looksReversed, detectLang, hasText };
+  const api = { pageText, streamIsVisual, looksReadable, readableRatio, streamText, geomText, repairForms, repairBase, brokenRatio, score, cleanText, flipText, looksReversed, detectLang, hasText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PdfText = api;
 })(typeof window !== 'undefined' ? window : globalThis);

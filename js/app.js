@@ -8,7 +8,7 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
   const AR = (n) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const BUILD = 9; // رقم إصدار التطبيق، يظهر في الإعدادات
+  const BUILD = 10; // رقم إصدار التطبيق، يظهر في الإعدادات
   const API = 'https://api.alquran.cloud/v1';
   const AUDIO = (ed, n) => `https://cdn.islamic.network/quran/audio/128/${ed}/${n}.mp3`;
   const TESSERACT = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
@@ -38,7 +38,7 @@
     r.style.setProperty('--fs', S.font + 'px');
     const hero = getComputedStyle(r).getPropertyValue('--hero').trim();
     if (hero) $('meta[name=theme-color]').setAttribute('content', hero);
-    if (R.sess) R.sess.setStrictness(S.strict);
+    if (R.sess) R.sess.setStrictness(effStrict(R.kind));
     syncEngines();
   }
   function syncEngines() {
@@ -270,7 +270,7 @@
         for (let i = e.resultIndex; i < e.results.length; i++) {
           const res = e.results[i];
           const tx = res[0] ? res[0].transcript : '';
-          if (res.isFinal) { if (!done.has(i)) { done.add(i); this.onFinal(tx); } } else interim += tx + ' ';
+          if (res.isFinal) { if (!done.has(i)) { done.add(i); this.onFinal(tx, res[0] ? res[0].confidence : undefined); } } else interim += tx + ' ';
         }
         this.onPartial(interim.trim());
       };
@@ -281,7 +281,7 @@
       };
       r.onend = () => {
         if (this.rec !== r) return;
-        if (this.active) setTimeout(() => { if (this.active && this.rec === r) this._spawn(); }, 120);
+        if (this.active) setTimeout(() => { if (this.active && this.rec === r) this._spawn(); }, 60);
         else { this.rec = null; this.onState('idle'); }
       };
       this.rec = r;
@@ -336,6 +336,8 @@
     if (e === 'browser') return SR ? new Listener(h) : null;
     return new window.ASR.ModelListener(Object.assign({ engine: e === 'local' ? window.ASR.LocalEngine : window.ASR.ServerEngine }, h));
   }
+  // تعرّف المتصفح أقل دقة مع التلاوة، فنتساهل معه ما لم يختر المستخدم دقة بنفسه
+  const effStrict = (kind) => (S.strictChosen ? S.strict : engineFor(kind) === 'browser' ? 'low' : S.strict);
   const needsConsent = (kind) => engineFor(kind) === 'local' && !window.ASR.LocalEngine.ready && !S.modelOk;
   function askModelDownload(go) {
     openSheet(`<h3>تحميل نموذج ترتيل</h3>
@@ -379,7 +381,7 @@
     stopListening(); stopAudio();
     const built = buildText(o.blocks);
     Object.assign(R, { kind: o.kind, ref: o.ref, title: o.title, sub: o.sub || '', lang: o.lang || 'ar-SA', t0: 0, sid: null, log: '', live: [], vcur: null, finished: false, extra: o.extra || {}, words: built.words, ayahs: built.ayahs });
-    R.sess = new M.Session(built.words, { strictness: S.strict });
+    R.sess = new M.Session(built.words, { strictness: effStrict(o.kind) });
     const box = $('#r-text');
     box.innerHTML = `<div class="page" dir="${o.dir || 'rtl'}">${built.html}</div>`;
     R.els = [];
@@ -474,11 +476,11 @@
     h.classList.add('on');
   }
 
-  function onFinal(text) {
+  function onFinal(text, conf) {
     if (!R.sess || !text) return;
     logHeard(text, true);
     setLive([]);
-    const { changed, jumped } = R.sess.feed(text);
+    const { changed, jumped } = R.sess.feed(text, { conf });
     for (const i of changed) paint(i);
     moveCur(); updateStats(); saveResume();
     if (jumped) toast('تابعناك من الموضع الذي تقرأ منه');
@@ -1232,7 +1234,7 @@
     const seg = (k, opts, cls) => `<div class="seg ${cls || ''}" data-k="${k}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${S[k] === v}">${l}</button>`).join('')}</div>`;
     const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`).join('');
     openSheet(`<h3>الإعدادات</h3><div class="set">${accountBlock()}
-      <div class="field"><span>دقّة التصحيح <small>· المتساهلة تتجاوز عن أخطاء التعرّف الصوتي، والصارمة تدقّق أكثر</small></span>${seg('strict', [['low', 'متساهلة'], ['mid', 'متوسطة'], ['high', 'صارمة']])}</div>
+      <div class="field"><span>دقّة التصحيح <small>· المتساهلة تتجاوز عن أخطاء التعرّف الصوتي، والصارمة تدقّق أكثر${S.strictChosen ? '' : ' · تُضبط تلقائياً حسب المحرّك'}</small></span>${seg('strict', [['low', 'متساهلة'], ['mid', 'متوسطة'], ['high', 'صارمة']])}</div>
       <label class="field"><span>حجم الخط: <b id="st-fv">${AR(S.font)}</b></span><input type="range" id="st-font" min="20" max="44" step="1" value="${S.font}"></label>
       <label class="field"><span>القارئ</span><select id="st-rec">${opt(RECITERS, S.reciter)}</select></label>
       <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['auto', 'تلقائي (الأسرع لجهازك)'], ['browser', 'المتصفح · فوري'], ['local', 'ترتيل · على الجهاز'], ['server', 'ترتيل · خادم']], 'two')}<div id="eng-panel" class="engpanel"></div></div>
@@ -1252,6 +1254,7 @@
       $$('[data-v]', sg).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       saveSettings();
       if (sg.dataset.k === 'engine') { S.engineChosen = true; store.set('settings', S); renderEngPanel(); }
+      if (sg.dataset.k === 'strict') { S.strictChosen = true; store.set('settings', S); }
     }));
     renderEngPanel();
     $('#st-font').oninput = (e) => { S.font = +e.target.value; $('#st-fv').textContent = AR(S.font); saveSettings(); };

@@ -67,4 +67,38 @@ t('readableRatio ignores blank pages', () => {
   assert.strictEqual(P.readableRatio([]), 0);
 });
 
+
+t('fixes PDFs that store words in visual (reversed) order', () => {
+  // سطر عربي كلماته مخزّنة من اليسار إلى اليمين: "العلم نور يضيء طريق الإنسان"
+  const words = ['الإنسان', 'طريق', 'يضيء', 'نور', 'العلم'];   // ترتيب الملف = من اليسار
+  let x = 40;
+  const items = words.map((w) => {
+    const it = { str: w, dir: 'rtl', width: w.length * 9, height: 14, transform: [14, 0, 0, 14, x, 700] };
+    x += w.length * 9 + 8;
+    return it;
+  });
+  assert.strictEqual(P.streamIsVisual(items), true);
+  assert.strictEqual(P.pageText(items), 'العلم نور يضيء طريق الإنسان');
+});
+
+t('leaves logical-order PDFs alone', () => {
+  const words = ['العلم', 'نور', 'يضيء', 'طريق', 'الإنسان'];   // ترتيب منطقي سليم: x يتناقص
+  let x = 520;
+  const items = words.map((w) => {
+    x -= w.length * 9 + 8;
+    return { str: w, dir: 'rtl', width: w.length * 9, height: 14, transform: [14, 0, 0, 14, x, 700] };
+  });
+  assert.strictEqual(P.streamIsVisual(items), false);
+  assert.strictEqual(P.pageText(items), 'العلم نور يضيء طريق الإنسان');
+});
+
+t('two columns of verse keep each hemistich in order', () => {
+  // بيت شعر: الصدر يمين الصفحة والعجز يساره، والملف يخزّنهما بترتيب العرض
+  const mk = (w, x) => ({ str: w, dir: 'rtl', width: w.length * 9, height: 14, transform: [14, 0, 0, 14, x, 600] });
+  // الصدر يمين الصفحة (x كبير) والعجز يسارها، والملف يخزّنهما من اليسار
+  const items = [mk('الجمزوري', 60), mk('هو', 150), mk('سليمان', 190), mk('دوما', 270),
+                 mk('الغفور', 350), mk('رحمة', 420), mk('راجي', 480), mk('يقول', 540)];
+  assert.strictEqual(P.pageText(items), 'يقول راجي رحمة الغفور دوما سليمان هو الجمزوري');
+});
+
 console.log(`\n${pass} passed`);

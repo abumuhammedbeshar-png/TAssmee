@@ -208,8 +208,13 @@
       return out;
     }
 
-    /** اعتماد عبارة نهائية من التعرّف. يعيد فهارس الكلمات التي تغيّرت حالتها */
-    feed(text) {
+    /**
+     * اعتماد عبارة نهائية من التعرّف.
+     * opts.conf: ثقة التعرّف (٠–١). الثقة المنخفضة أو المطابقة الضعيفة لا تُخطّئ القارئ،
+     * بل تُعلّم الكلمات «لم تُتحقَّق» كي لا يُتَّهم الحافظ بخطأ لم يرتكبه.
+     */
+    feed(text, opts) {
+      opts = opts || {};
       const toks = tokenize(text);
       const R = toks.map((t) => t.n);
       if (!R.length) return { changed: [], jumped: false };
@@ -233,6 +238,17 @@
         }
       }
 
+      // جودة مطابقة هذه العبارة: كم كلمة متوقّعة طابقت مقابل ما خُطّئ أو سقط
+      let mN = 0, badN = 0;
+      for (const o of ops) {
+        if (o.type === 'M') mN += o.t.length;
+        else if (o.type === 'S' || o.type === 'D') badN++;
+      }
+      const quality = mN + badN ? mN / (mN + badN) : 1;
+      const lowConf = opts.conf != null && opts.conf > 0 && opts.conf < 0.55;
+      const soft = lowConf || (badN >= 2 && quality < 0.5);
+      const bad = soft ? 'skip' : 'err';
+
       let seenM = false;
       const trailText = this.trail.join(' ');
       let usedTrail = false;
@@ -242,12 +258,12 @@
           for (const t of o.t) { const g = base + t; if (this.state[g] === 'p' || this.state[g] === 'skip') { this.state[g] = 'ok'; changed.push(g); } }
         } else if (o.type === 'S') {
           const g = base + o.t[0];
-          this.state[g] = 'err'; this.heard[g] = toks[o.r[0]].disp; changed.push(g);
+          this.state[g] = bad; this.heard[g] = soft ? '' : toks[o.r[0]].disp; changed.push(g);
         } else if (o.type === 'D') {
           const g = base + o.t[0];
           if (this.state[g] === 'p') {
-            this.state[g] = 'err';
-            if (!seenM && trailText && !usedTrail) { this.heard[g] = trailText; usedTrail = true; }
+            this.state[g] = bad;
+            if (!soft && !seenM && trailText && !usedTrail) { this.heard[g] = trailText; usedTrail = true; }
             changed.push(g);
           }
         }
