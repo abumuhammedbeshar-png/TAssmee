@@ -213,5 +213,11 @@ export function makeResumableFetch(o = {}) {
     if (!(await part.keys()).length) await store.delete(PART_CACHE);
   }
 
-  return { fetch: fetchWrapped, tidy };
+  // حذف أجزاء ملف بعد أن حفظه صاحبه كاملاً في ذاكرته الخاصة
+  async function forget(url) {
+    if (!store || !(await store.has(PART_CACHE))) return;
+    await wipe(await store.open(PART_CACHE), url);
+  }
+
+  return { fetch: fetchWrapped, tidy, forget };
 }

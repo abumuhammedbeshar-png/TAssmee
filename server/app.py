@@ -1,11 +1,14 @@
 """
 خادم التعرّف على التلاوة لتطبيق «تسميع»
-يشغّل نموذج ترتيل المفتوح tarteel-ai/whisper-base-ar-quran ويستقبل مقاطع WAV من التطبيق.
+يشغّل نموذج ترتيل المفتوح tarteel-ai/whisper-base-ar-quran بمكتبة faster-whisper (CTranslate2، int8)،
+وهي أسرع بعدة مرات من transformers على المعالج نفسه. يستقبل مقاطع WAV من التطبيق.
 
   GET  /health      → حالة الخادم
   POST /transcribe  → جسم الطلب ملف WAV (16-bit PCM)، والردّ {"text": "..."}
 
-التشغيل محلياً:  pip install -r requirements.txt && uvicorn app:app --port 7860
+التشغيل محلياً (انظر README.md):
+  python convert.py tarteel-ai/whisper-base-ar-quran ./model
+  MODEL_DIR=./model uvicorn app:app --port 7860
 """
 import io
 import os
@@ -22,30 +25,41 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 MODEL_ID = os.environ.get("MODEL_ID", "tarteel-ai/whisper-base-ar-quran")
+MODEL_DIR = os.environ.get("MODEL_DIR", "/model")   # النموذج بعد تحويله بـ convert.py
+THREADS = int(os.environ.get("THREADS", "0") or 0) or (os.cpu_count() or 2)
 MAX_BYTES = 4 * 1024 * 1024          # ~2 دقيقة بصيغة 16 ك.هرتز
 MAX_SECONDS = 30                      # Whisper يعالج 30 ثانية كحدّ أقصى
 RATE = 16000
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 
-_pipe = None
+_model = None
 _lock = threading.Lock()
 _mode = None  # "lang" إن قبل النموذج تحديد العربية صراحةً، و"plain" إن لم يقبل
 
+# فكّ ترميز جشع واحد دون إعادة محاولات ولا تقطيع زمني: أسرع ما يمكن، ومطابق لما كان يفعله الخادم سابقاً
+DECODE = dict(
+    task="transcribe",
+    beam_size=1,
+    temperature=0.0,
+    without_timestamps=True,
+    condition_on_previous_text=False,
+    vad_filter=False,                 # التطبيق يقطّع الصوت عند الوقفات بنفسه
+    compression_ratio_threshold=None,
+    log_prob_threshold=None,
+    no_speech_threshold=None,         # لا نُسقط مقطعاً لأن النموذج «ظنّه» صمتاً
+    max_new_tokens=220,
+)
 
-def get_pipe():
-    global _pipe
-    if _pipe is None:
+
+def get_model():
+    global _model
+    if _model is None:
         with _lock:
-            if _pipe is None:
-                import torch
-                from transformers import pipeline
+            if _model is None:
+                from faster_whisper import WhisperModel
 
-                _pipe = pipeline(
-                    "automatic-speech-recognition",
-                    model=MODEL_ID,
-                    device=0 if torch.cuda.is_available() else -1,
-                )
-    return _pipe
+                _model = WhisperModel(MODEL_DIR, device="auto", compute_type="default", cpu_threads=THREADS, num_workers=1)
+    return _model
 
 
 def read_wav(data: bytes) -> np.ndarray:
@@ -63,25 +77,27 @@ def read_wav(data: bytes) -> np.ndarray:
     return audio[: RATE * MAX_SECONDS]
 
 
+def _run(audio: np.ndarray, **kw) -> str:
+    segments, _info = get_model().transcribe(audio, **DECODE, **kw)
+    return " ".join(s.text.strip() for s in segments).strip()
+
+
 def transcribe(audio: np.ndarray) -> str:
     global _mode
-    pipe = get_pipe()
-    inp = {"raw": audio, "sampling_rate": RATE}
     if _mode != "plain":
         try:
-            out = pipe(inp, generate_kwargs={"language": "arabic", "task": "transcribe", "max_new_tokens": 220})
+            text = _run(audio, language="ar")
             _mode = "lang"
-            return out["text"].strip()
+            return text
         except Exception:
             if _mode == "lang":
                 raise
             _mode = "plain"
-    out = pipe(inp, generate_kwargs={"max_new_tokens": 220})
-    return out["text"].strip()
+    return _run(audio)
 
 
 async def health(request):
-    return JSONResponse({"ok": True, "model": MODEL_ID, "ready": _pipe is not None})
+    return JSONResponse({"ok": True, "model": MODEL_ID, "ready": _model is not None, "engine": "faster-whisper"})
 
 
 async def transcribe_endpoint(request):
@@ -102,7 +118,9 @@ async def transcribe_endpoint(request):
 
 def warmup():
     try:
-        get_pipe()
+        get_model()
+        transcribe(np.zeros(RATE, dtype=np.float32))  # تحمية: أول طلب حقيقي لا ينتظر التهيئة
+        print("model ready:", MODEL_ID, "threads:", THREADS, flush=True)
     except Exception as e:  # noqa: BLE001
         print("model load failed:", e, flush=True)
 

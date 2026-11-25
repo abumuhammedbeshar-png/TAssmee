@@ -310,9 +310,10 @@
     'engine-run': 'تعذّر التعرّف على هذا المقطع. تابع القراءة.',
     'engine-unsupported': 'متصفحك لا يدعم تشغيل النموذج على الجهاز. اختر «خادم» أو «المتصفح» من الإعدادات.',
     'no-server': 'أدخل رابط خادم التعرّف من الإعدادات أولاً.',
+    'ctc-load': 'تعذّر تحميل «المعلّم». تحقّق من اتصالك بالإنترنت، أو اختر محرّكاً آخر من الإعدادات.',
     server: 'تعذّر الوصول إلى خادم التعرّف. تأكد أن الخادم يعمل.',
   };
-  const ENGINE_NAME = { browser: 'تعرّف المتصفح', local: 'نموذج ترتيل على جهازك', server: 'نموذج ترتيل على الخادم' };
+  const ENGINE_NAME = { browser: 'تعرّف المتصفح', local: 'نموذج ترتيل على جهازك', server: 'نموذج ترتيل على الخادم', ctc: '«المعلّم» على جهازك (تجريبي)' };
   // نموذج ترتيل مدرَّب على القرآن فقط، فالكتب تبقى على تعرّف المتصفح
   // «تلقائي»: نموذج ترتيل إن كان الجهاز يدعم WebGPU (سريع)، وإلا تعرّف المتصفح الفوري
   let GPU = false;
@@ -325,21 +326,37 @@
     if (GPU) return 'local';
     return SR ? 'browser' : 'local';
   }
+  // kind: 'quran' (تسميع سورة) · 'search' (البحث بالتلاوة) · غير ذلك (الكتب)
   const engineFor = (kind) => {
-    if (kind !== 'quran') return 'browser';
-    const e = S.engine === 'auto' ? autoEngine() : S.engine;
+    if (kind !== 'quran' && kind !== 'search') return 'browser';
+    let e = S.engine === 'auto' ? autoEngine() : S.engine;
+    // «المعلّم» يقارن بما يجب أن يُقرأ، فلا يصلح للبحث عن آية مجهولة
+    if (e === 'ctc' && kind === 'search') e = SR ? 'browser' : 'local';
     return ENGINE_NAME[e] ? e : 'browser';
   };
   const canListen = (kind) => (engineFor(kind) === 'browser' ? !!SR : !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
   function makeListener(kind, h) {
     const e = engineFor(kind);
     if (e === 'browser') return SR ? new Listener(h) : null;
-    return new window.ASR.ModelListener(Object.assign({ engine: e === 'local' ? window.ASR.LocalEngine : window.ASR.ServerEngine }, h));
+    const A = window.ASR;
+    return new A.ModelListener(Object.assign({ engine: e === 'local' ? A.LocalEngine : e === 'ctc' ? A.CtcEngine : A.ServerEngine }, h));
   }
   // تعرّف المتصفح أقل دقة مع التلاوة، فنتساهل معه ما لم يختر المستخدم دقة بنفسه
   const effStrict = (kind) => (S.strictChosen ? S.strict : engineFor(kind) === 'browser' ? 'low' : S.strict);
-  const needsConsent = (kind) => engineFor(kind) === 'local' && !window.ASR.LocalEngine.ready && !S.modelOk;
-  function askModelDownload(go) {
+  const needsConsent = (kind) => {
+    const e = engineFor(kind);
+    return (e === 'local' && !window.ASR.LocalEngine.ready && !S.modelOk) || (e === 'ctc' && !window.ASR.CtcEngine.ready && !S.ctcOk);
+  };
+  function askModelDownload(go, kind) {
+    if (engineFor(kind || 'quran') === 'ctc' && !S.ctcOk) {
+      openSheet(`<h3>تحميل «المعلّم» (تجريبي)</h3>
+        <p>«المعلّم» نموذج يسمع تلاوتك ويقارنها بالآيات حرفاً حرفاً، فيصحّح بسرعة كبيرة حتى على الجوالات التي لا تدعم تسريع الرسوميات. سيُحمَّل إلى جهازك مرة واحدة: نحو ٢٣ م.ب للنموذج و١٠ م.ب لمحرّك التشغيل. يُستحسن الاتصال بشبكة Wi-Fi، وإن انقطع التحميل يُستكمل من حيث توقف.</p>
+        <p class="note">بعد التحميل يعمل داخل جهازك حتى دون إنترنت، ولا يغادره صوتك. ما زال تجريبياً: إن رأيت تصحيحاً غير دقيق فأخبرنا، أو اختر محرّكاً آخر من الإعدادات.</p>
+        <div class="row"><button class="btn primary" id="md-ok">حمّل وابدأ</button><button class="btn ghost" id="md-no">استخدم تعرّف المتصفح</button></div>`);
+      $('#md-ok').onclick = () => { S.ctcOk = true; store.set('settings', S); closeSheet(); go(); };
+      $('#md-no').onclick = () => { S.engine = 'browser'; saveSettings(); closeSheet(); go(); };
+      return;
+    }
     openSheet(`<h3>تحميل نموذج ترتيل</h3>
       <p>لتصحيح التلاوة بدقة أعلى سيُحمَّل نموذج ترتيل المفتوح (whisper-base-ar-quran) إلى جهازك مرة واحدة: نحو ${navigator.gpu ? '١٠٠–٢٠٠' : '١٠٠'} م.ب. يُستحسن الاتصال بشبكة Wi-Fi.</p>
       <p class="note">بعد التحميل يعمل التعرّف داخل جهازك حتى دون إنترنت، ولا يغادره صوتك.</p>
@@ -478,9 +495,11 @@
 
   function onFinal(text, conf) {
     if (!R.sess || !text) return;
-    logHeard(text, true);
+    // محرّك «المعلّم» يعيد حكماً جاهزاً على الكلمات بدل نصّ
+    const judged = typeof text === 'object';
+    logHeard(judged ? text.text || '' : text, true);
     setLive([]);
-    const { changed, jumped } = R.sess.feed(text, { conf });
+    const { changed, jumped } = judged ? R.sess.apply(text) : R.sess.feed(text, { conf });
     for (const i of changed) paint(i);
     moveCur(); updateStats(); saveResume();
     if (jumped) toast('تابعناك من الموضع الذي تقرأ منه');
@@ -491,6 +510,7 @@
   }
   function onPartial(text) {
     if (!R.sess) return;
+    if (text && typeof text === 'object') { if (text.text) logHeard(text.text, false); setLive(text.preview || []); return; }
     if (text) logHeard(text, false);
     setLive(text ? R.sess.preview(text) : []);
   }
@@ -507,10 +527,11 @@
   function startListening() {
     if (!R.sess) return;
     if (R.sess.done) { toast('أتممت النص. اضغط زر الإعادة لتبدأ من جديد'); return; }
-    if (needsConsent(R.kind)) { askModelDownload(startListening); return; }
+    if (needsConsent(R.kind)) { askModelDownload(startListening, R.kind); return; }
     stopAudio();
     const L = makeListener(R.kind, {
       lang: R.lang, onFinal, onPartial, onError: micError,
+      context: () => ({ words: R.words, ayahs: R.kind === 'quran' ? R.ayahs : [], pos: R.sess.pos, strict: effStrict(R.kind) }),
       onState: (st) => { if (R.listener === L || !R.listener) micState(st); },
       onStatus: (t) => { if (t && R.listener === L) { const h = $('#r-heard'); h.textContent = t; h.classList.remove('on'); } },
     });
@@ -779,11 +800,11 @@
     };
     $('#vs-form').onsubmit = (e) => { e.preventDefault(); run($('#vs-q').value); };
     $('#vs-mic').onclick = () => {
-      if (!canListen('quran')) { toast('التعرّف على الصوت غير متاح في هذا المتصفح؛ اكتب الكلمات بدلاً من ذلك.'); $('#vs-q').focus(); return; }
+      if (!canListen('search')) { toast('التعرّف على الصوت غير متاح في هذا المتصفح؛ اكتب الكلمات بدلاً من ذلك.'); $('#vs-q').focus(); return; }
       if (vl) { vl.stop(); return; }
-      if (needsConsent('quran')) { askModelDownload(() => openVoiceSearch(true)); return; }
+      if (needsConsent('search')) { askModelDownload(() => openVoiceSearch(true), 'search'); return; }
       let acc = '';
-      vl = makeListener('quran', {
+      vl = makeListener('search', {
         lang: S.lang,
         onStatus: (t) => { const h = $('#vs-heard'); if (h && t) h.textContent = t; },
         onPartial: (t) => { const h = $('#vs-heard'); if (h) h.textContent = (acc + ' ' + t).trim() || 'أستمع…'; },
@@ -1237,7 +1258,7 @@
       <div class="field"><span>دقّة التصحيح <small>· المتساهلة تتجاوز عن أخطاء التعرّف الصوتي، والصارمة تدقّق أكثر${S.strictChosen ? '' : ' · تُضبط تلقائياً حسب المحرّك'}</small></span>${seg('strict', [['low', 'متساهلة'], ['mid', 'متوسطة'], ['high', 'صارمة']])}</div>
       <label class="field"><span>حجم الخط: <b id="st-fv">${AR(S.font)}</b></span><input type="range" id="st-font" min="20" max="44" step="1" value="${S.font}"></label>
       <label class="field"><span>القارئ</span><select id="st-rec">${opt(RECITERS, S.reciter)}</select></label>
-      <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['auto', 'تلقائي (الأسرع لجهازك)'], ['browser', 'المتصفح · فوري'], ['local', 'ترتيل · على الجهاز'], ['server', 'ترتيل · خادم']], 'two')}<div id="eng-panel" class="engpanel"></div></div>
+      <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['auto', 'تلقائي (الأسرع لجهازك)'], ['browser', 'المتصفح · فوري'], ['local', 'ترتيل · على الجهاز'], ['server', 'ترتيل · خادم'], ['ctc', 'المعلّم · سريع (تجريبي)']], 'two')}<div id="eng-panel" class="engpanel"></div></div>
       <label class="field"><span>لهجة تعرّف المتصفح</span><select id="st-lang">${opt(DIALECTS, S.lang)}</select></label>
       <label class="field"><span>الهدف اليومي (عدد الكلمات)</span><input type="number" id="st-goal" min="10" step="10" inputmode="numeric" value="${S.goal}"></label>
       <div class="field"><span>المظهر</span>${seg('theme', [['auto', 'تلقائي'], ['light', 'فاتح'], ['dark', 'داكن']])}</div>
@@ -1271,7 +1292,7 @@
         }
         if (window.caches) {
           // نُبقي نموذج ترتيل المحمَّل كي لا يُعاد تحميله (١٠٠–٢٠٠ م.ب) مع كل تحديث
-          const keep = ['transformers-cache', 'tasmee-partial'];
+          const keep = ['transformers-cache', 'tasmee-partial', 'tasmee-models'];
           const ks = await caches.keys();
           await Promise.all(ks.filter((k) => !keep.includes(k)).map((k) => caches.delete(k)));
         }
@@ -1327,6 +1348,29 @@
           .catch(() => { if (st.isConnected) st.textContent = MIC_ERR['engine-load']; lb.disabled = false; });
       };
       $('#st-model').onchange = (e) => { S.model = e.target.value.trim() || window.ASR.DEFAULT_MODEL; saveSettings(); renderEngPanel(); };
+    } else if (S.engine === 'ctc') {
+      const C = window.ASR.CtcEngine;
+      box.innerHTML = `<p class="note">«المعلّم» نموذج مفتوح (HisnLabs Tajweed v2) يسمع الأصوات لا الكلمات، فيقارن تلاوتك بالآيات حرفاً حرفاً ولا «يصحّح» خطأك تلقائياً كما تفعل نماذج الكتابة. يعمل داخل جهازك دون إنترنت بعد تحميله مرة واحدة (نحو ٣٣ م.ب)، ويصحّح فور كل وقفة حتى على الجوالات المتوسطة.</p>
+        <p class="note">تجريبي: دُرّب أكثره على أصوات قرّاء رجال، فقد تقلّ دقته مع غيرهم. الحرف الذي لم يتأكد منه يُعلَّم «لم تُتحقَّق» لا «خطأ». البحث بالتلاوة يستخدم محرّكاً آخر.</p>
+        <p class="note" id="eng-st">${esc(C.ready ? `جاهز على جهازك · ${C.info && C.info.threads > 1 ? 'عدة أنوية' : 'نواة واحدة'}` : C.loading ? 'جارٍ التحميل…' : 'لم يُحمَّل بعد.')}</p>
+        ${C.ready ? '' : '<button class="btn ghost sm" id="eng-load" type="button">حمّل «المعلّم» الآن</button>'}${books}`;
+      const lb = $('#eng-load');
+      if (lb && !C.loading) {
+        C.stored().then((k) => {
+          const st = $('#eng-st');
+          if (!k || !st || !lb.isConnected || C.ready || C.loading) return;
+          if (k === 'saved') { st.textContent = 'محفوظ على جهازك، ويعمل دون إنترنت. يُشغَّل تلقائياً عند أول تسميع.'; lb.textContent = 'شغّله الآن'; }
+          else { st.textContent = 'تحميل سابق لم يكتمل، وسيُستكمل من حيث توقف.'; lb.textContent = 'أكمل التحميل'; }
+        });
+      }
+      if (lb) lb.onclick = () => {
+        S.ctcOk = true; store.set('settings', S);
+        lb.disabled = true;
+        const st = $('#eng-st');
+        C.ensure((t) => { if (t && st.isConnected) st.textContent = t; })
+          .then(() => { toast('«المعلّم» جاهز'); if ($('#eng-panel')) renderEngPanel(); })
+          .catch(() => { if (st.isConnected) st.textContent = MIC_ERR['ctc-load']; lb.disabled = false; });
+      };
     } else if (S.engine === 'server') {
       box.innerHTML = `<p class="note">شغّل الخادم المرفق في مجلد <b dir="ltr">server</b> على Hugging Face Spaces مجاناً، ثم الصق رابطه هنا. مناسب للجوالات البطيئة.</p>
         <label class="field"><span>رابط الخادم</span><input type="url" id="st-server" dir="ltr" placeholder="https://username-tasmee-asr.hf.space" value="${esc(S.server)}" autocomplete="off"></label>
@@ -1707,7 +1751,8 @@
         // نسخة جديدة من التطبيق نُشرت: نعيد التحميل إن لم يكن المستخدم في منتصف تسميع
         // ولا نعيد التحميل أثناء تنزيل نموذج ترتيل كي لا ينقطع
         const L = window.ASR && window.ASR.LocalEngine;
-        if (!hadController || reloading || !$('#reader').hidden || (L && L.loading && !L.ready)) return;
+        const C = window.ASR && window.ASR.CtcEngine;
+        if (!hadController || reloading || !$('#reader').hidden || (L && L.loading && !L.ready) || (C && C.loading && !C.ready)) return;
         reloading = true;
         location.reload();
       });

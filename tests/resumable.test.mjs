@@ -119,6 +119,15 @@ await t('بعد حفظ الملف كاملاً تُحذف أجزاؤه (tidy)', 
   assert.strictEqual(await partKeys(c), 0);
 });
 
+await t('forget: يحذف أجزاء ملف حفظه صاحبه في ذاكرة أخرى', async () => {
+  const c = new MemCaches();
+  const rf = mk(c);
+  await consume(rf.fetch, URL1, c, 0, true);
+  assert.ok((await partKeys(c)) > 0);
+  await rf.forget(URL1);
+  assert.strictEqual(await partKeys(c), 0);
+});
+
 await t('إن لم يكتمل حفظ المكتبة، تعمل الأجزاء المحفوظة دون إنترنت', async () => {
   const c = new MemCaches();
   await consume(mk(c).fetch, URL1, c, 0, true); // كأن حفظ المكتبة فشل (امتلاء الذاكرة مثلاً)

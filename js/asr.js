@@ -39,6 +39,9 @@
       this.onSegment = o.onSegment || (() => {});
       this.onPartial = o.onPartial || (() => {});
       this.onLevel = o.onLevel || (() => {});
+      // إطارات الصمت التي تُنهي العبارة، وكل كم إطاراً نعرض معاينة (الإطار ٣٠ م.ث)
+      this.endFrames = o.endFrames || 17;
+      this.previewEvery = o.previewEvery || 50;
       this.seq = 0;
       this.reset();
     }
@@ -137,9 +140,9 @@
       }
       this.seg.push(f); this.lv.push(rms);
       if (speech) { this.silence = 0; this.voiced++; } else this.silence++;
-      if (this.silence >= 17) { this.end(); return; }          // ~0.5 ث صمت = نهاية عبارة
+      if (this.silence >= this.endFrames) { this.end(); return; } // صمت قصير = نهاية عبارة
       if (this.seg.length >= 334) { this.cut(); return; }        // ~10 ث حدّ أقصى
-      if (++this.sinceP >= 50 && this.voiced >= 15) {            // معاينة كل ~1.5 ث
+      if (++this.sinceP >= this.previewEvery && this.voiced >= 15) { // معاينة أثناء القراءة
         this.sinceP = 0;
         this.onPartial(concat(this.seg), this.seq);
       }
@@ -287,6 +290,102 @@
     },
   };
 
+  /* ---------- محرّك «المعلّم»: نموذج HisnLabs Tajweed v2 على الجهاز (تجريبي) ----------
+   * لا يكتب كلمات بل يسمع الأصوات، فيحكم على كل كلمة بمقارنتها بالمرجع الصوتي للآيات (js/phonetic.js).
+   * أسرع بكثير من Whisper: يسمع المقطع دفعة واحدة، وحجمه ٢٣ م.ب. */
+  const CTC_MODEL_URL = 'https://huggingface.co/HisnLabs/tajweed-v2/resolve/main/onnx/model-int8.onnx';
+  const CTC_DATA_URL = 'data/quran-ph.txt?v=1';
+  const CtcEngine = {
+    worker: null, ready: false, loading: null, info: null, fast: true, ref: null,
+    pending: new Map(), id: 0, listeners: new Set(),
+    async loadRef() {
+      if (this.ref) return this.ref;
+      const url = new URL(CTC_DATA_URL, root.location.href).href;
+      let r = null, store = null;
+      try { store = await caches.open('tasmee-models'); r = await store.match(url); } catch (e) { /* ignore */ }
+      if (!r) {
+        r = await fetch(url);
+        if (!r.ok) throw err('ctc-load', 'HTTP ' + r.status);
+        if (store) store.put(url, r.clone()).catch(() => {});
+      }
+      const ref = new root.Phonetic.Ref(await r.text());
+      if (!ref.ok) throw err('ctc-load', 'bad reference data');
+      this.ref = ref;
+      return ref;
+    },
+    ensure(onStatus) {
+      if (this.ready) return Promise.resolve(this.info);
+      if (onStatus) this.listeners.add(onStatus);
+      if (!this.loading) {
+        try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* ignore */ }
+        const model = new Promise((res, rej) => {
+          let w;
+          try {
+            w = new Worker(new URL('js/ctc-worker.js', root.location.href), { type: 'module' });
+          } catch (e) { rej(err('engine-unsupported')); return; }
+          this.worker = w;
+          this.emit('جارٍ تجهيز «المعلّم»…');
+          w.onmessage = (e) => {
+            const m = e.data;
+            if (m.type === 'progress') {
+              if (m.phase === 'open') this.emit('جارٍ تشغيل «المعلّم» المحفوظ على جهازك…');
+              else if (m.phase === 'start') this.emit('جارٍ تشغيل «المعلّم»…');
+              else if (m.phase === 'model' && m.total > 0) this.emit(`جارٍ تحميل «المعلّم»… ${AR(Math.min(99, Math.round((m.loaded / m.total) * 100)))}٪ (${fmtMB(m.loaded)} من ${fmtMB(m.total)} م.ب) · يُستكمل من حيث توقف إن خرجت`);
+            } else if (m.type === 'ready') res(m);
+            else if (m.type === 'fail') rej(err('ctc-load', m.message));
+            else if (m.type === 'result' || m.type === 'error') {
+              const p = this.pending.get(m.id);
+              if (!p) return;
+              this.pending.delete(m.id);
+              if (m.type === 'result') p.res(m); else p.rej(err('engine-run', m.message));
+            }
+          };
+          w.onerror = (e) => { rej(err('ctc-load', e.message)); };
+          w.postMessage({ type: 'load' });
+        });
+        this.loading = Promise.all([this.loadRef(), model]).then(([, info]) => {
+          this.ready = true; this.info = info;
+          this.emit('');
+          return info;
+        }).catch((e) => {
+          this.loading = null;
+          if (this.worker) { this.worker.terminate(); this.worker = null; }
+          throw e && e.code ? e : err('ctc-load', e && e.message);
+        }).finally(() => { this.listeners.clear(); });
+      }
+      return this.loading;
+    },
+    emit(t) { for (const f of this.listeners) { try { f(t); } catch (e) { /* ignore */ } } },
+    /** يعيد حكماً على الكلمات {judged, pos, text, preview} إن أُعطي سياق القارئ، وإلا نصاً تقريبياً */
+    async transcribe(audio, opt) {
+      if (!this.ready) throw err('ctc-load');
+      const r = await new Promise((res, rej) => {
+        const id = ++this.id;
+        this.pending.set(id, { res, rej });
+        this.worker.postMessage({ type: 'run', id, audio }, [audio.buffer]);
+      });
+      const P = root.Phonetic;
+      const gs = P.groups(r.ph, r.probs);
+      const ctx = opt && opt.ctx;
+      if (!ctx || !ctx.ayahs || !ctx.ayahs.length) return P.roughText(gs);
+      return P.judge(this.ref, gs, ctx) || { judged: [], pos: ctx.pos, text: '', preview: [] };
+    },
+    async stored() {
+      try {
+        if (!root.caches) return null;
+        if ((await caches.has('tasmee-models')) && (await (await caches.open('tasmee-models')).match(CTC_MODEL_URL))) return 'saved';
+        if ((await caches.has('tasmee-partial')) && (await (await caches.open('tasmee-partial')).keys()).some((q) => q.url.includes('tajweed-v2'))) return 'partial';
+      } catch (e) { /* ignore */ }
+      return null;
+    },
+    reset() {
+      if (this.worker) this.worker.terminate();
+      this.worker = null; this.ready = false; this.loading = null; this.info = null;
+      for (const p of this.pending.values()) p.rej(err('engine-run'));
+      this.pending.clear();
+    },
+  };
+
   const tidy = (t) => String(t || '').replace(/[[(][^\])]*[\])]/g, ' ').replace(/\s+/g, ' ').trim();
 
   /* ---------- مستمع بنفس واجهة تعرّف المتصفح ---------- */
@@ -305,7 +404,15 @@
         try {
           await this.engine.ensure((t) => { if (this.active) this.onStatus(t); });
           if (!this.active) return;
-          this.segm = new Segmenter({ onSegment: (a, seq) => this.job(a, true, seq), onPartial: (a, seq) => this.partial(a, seq) });
+          // المحرّك السريع (WebGPU أو الخادم): نصحّح بعد ~٠٫٣٥ ث من الوقفة ونعرض معاينة كل ~ثانية.
+          // البطيء (WASM): ننتظر ~٠٫٥ ث كي لا تتكدّس المقاطع القصيرة في طابور المعالجة.
+          const fast = !!this.engine.fast;
+          this.segm = new Segmenter({
+            endFrames: fast ? 12 : 17,
+            previewEvery: fast ? 33 : 50,
+            onSegment: (a, seq) => this.job(a, true, seq),
+            onPartial: (a, seq) => this.partial(a, seq),
+          });
           try { await this.segm.start(this.ctx); } catch (e) {
             // بعض المتصفحات ترفض ربط الميكروفون بسياق 16 ك.هرتز؛ نعيد بالمعدّل الافتراضي
             if (e && (e.name === 'NotAllowedError' || e.name === 'NotFoundError')) throw e;
@@ -338,9 +445,21 @@
       this.busy = true;
       try {
         if (j.final) this.onStatus('⏳ أصحّح ما قرأت…');
-        const text = tidy(await this.engine.transcribe(j.audio, { final: j.final }));
-        if (j.final && !text && this.active) this.onStatus('أستمع إليك…');
-        if (j.final) { this.onPartial(''); if (text) this.onFinal(text); } else if (this.active && text) this.onPartial(text);
+        // سياق القارئ (الكلمات وموضعه) يُقرأ لحظة المعالجة، بعد اعتماد ما قبله
+        const ctx = typeof this.context === 'function' ? this.context() : null;
+        const out = await this.engine.transcribe(j.audio, { final: j.final, ctx });
+        if (out && typeof out === 'object') {
+          // حكم جاهز على الكلمات (محرّك «المعلّم»)
+          if (j.final) {
+            this.onPartial('');
+            if (out.judged && out.judged.length) this.onFinal(out);
+            else if (this.active) this.onStatus(out.text ? 'لم أتبيّن موضع قراءتك. تابع من حيث توقفت' : 'أستمع إليك…');
+          } else if (this.active && out.preview) this.onPartial(out);
+        } else {
+          const text = tidy(out);
+          if (j.final && !text && this.active) this.onStatus('أستمع إليك…');
+          if (j.final) { this.onPartial(''); if (text) this.onFinal(text); } else if (this.active && text) this.onPartial(text);
+        }
       } catch (e) {
         if (j.final) this.onError((e && e.code) || 'engine-run');
       }
@@ -367,5 +486,5 @@
     }
   }
 
-  root.ASR = { Segmenter, ModelListener, LocalEngine, ServerEngine, encodeWav, DEFAULT_MODEL, RATE };
+  root.ASR = { Segmenter, ModelListener, LocalEngine, ServerEngine, CtcEngine, encodeWav, DEFAULT_MODEL, RATE };
 })(window);

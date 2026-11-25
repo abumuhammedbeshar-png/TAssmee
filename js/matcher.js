@@ -276,6 +276,30 @@
       return { changed, jumped };
     }
 
+    /**
+     * اعتماد حكم جاهز على الكلمات (من محرّك «المعلّم» الذي يحكم بنفسه بالمقارنة الصوتية).
+     * res.judged: [{i, st: 'ok'|'err'|'skip', heard}] · res.pos: الموضع الجديد · res.jumped
+     * لا نُخطّئ كلمة قبل الموضع الحالي (القارئ يعيد ما قرأه)، ولا نغيّر «صحيحة» إلى «خطأ».
+     */
+    apply(res) {
+      const changed = [];
+      const lim = this.pos;
+      for (const j of (res && res.judged) || []) {
+        const g = j.i;
+        if (!(g >= 0 && g < this.N)) continue;
+        const s = this.state[g];
+        if (j.st === 'ok') {
+          if (s === 'p' || s === 'skip') { this.state[g] = 'ok'; changed.push(g); }
+        } else if (g >= lim || res.jumped) {
+          if (j.st === 'err' && (s === 'p' || s === 'skip')) { this.state[g] = 'err'; this.heard[g] = j.heard || ''; changed.push(g); }
+          else if (j.st === 'skip' && s === 'p') { this.state[g] = 'skip'; changed.push(g); }
+        }
+      }
+      if (res && res.pos != null) this.pos = Math.max(0, Math.min(this.N, res.pos | 0));
+      this.trail = [];
+      return { changed, jumped: !!(res && res.jumped) };
+    }
+
     _find(R, from, to, last, min) {
       const need = Math.max(min || 3, Math.ceil(R.length * 0.7));
       let found = null;
