@@ -6,7 +6,7 @@
  */
 import { makeResumableFetch } from './resumable.js';
 
-const MODEL_URL = 'https://huggingface.co/HisnLabs/tajweed-v2/resolve/main/onnx/model-int8.onnx';
+const MODEL_URL = 'https://huggingface.co/Hisnlabs/tajweed-v2/resolve/main/onnx/model-int8.onnx';
 const ORT_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
 const TF_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
 const STORE = 'tasmee-models';
@@ -28,7 +28,28 @@ async function modelBytes(url) {
     const hit = await store.match(url);
     if (hit) { post({ type: 'progress', phase: 'open' }); return new Uint8Array(await hit.arrayBuffer()); }
   } catch (e) { /* لا ذاكرة: نحمّل كل مرة */ }
-  const res = await (RF ? RF.fetch(url) : fetch(url));
+  let parts, got;
+  try {
+    ({ parts, got } = await download(RF ? RF.fetch : fetch, url));
+  } catch (e) {
+    // التحميل على أجزاء لم ينجح (خادم أو شبكة لا تقبل طلبات الأجزاء): نجرّب التحميل العادي مرة
+    if (!RF) throw e;
+    ({ parts, got } = await download(fetch, url));
+  }
+  const buf = new Uint8Array(got);
+  let o = 0;
+  for (const p of parts) { buf.set(p, o); o += p.length; }
+  if (store) {
+    try {
+      await store.put(url, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(got) } }));
+      if (RF) RF.forget(url).catch(() => {});
+    } catch (e) { /* امتلأت الذاكرة: تبقى أجزاء التحميل وتُستعمل في المرة القادمة */ }
+  }
+  return buf;
+}
+
+async function download(get, url) {
+  const res = await get(url);
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const total = +res.headers.get('content-length') || 0;
   const reader = res.body.getReader();
@@ -41,17 +62,8 @@ async function modelBytes(url) {
     got += value.length;
     if (got - shown >= 262144 || got === total) { shown = got; post({ type: 'progress', phase: 'model', loaded: got, total }); }
   }
-  if (total && got !== total) throw new Error('incomplete download');
-  const buf = new Uint8Array(got);
-  let o = 0;
-  for (const p of parts) { buf.set(p, o); o += p.length; }
-  if (store) {
-    try {
-      await store.put(url, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(got) } }));
-      if (RF) RF.forget(url).catch(() => {});
-    } catch (e) { /* امتلأت الذاكرة: تبقى أجزاء التحميل وتُستعمل في المرة القادمة */ }
-  }
-  return buf;
+  if (total && got !== total) throw new Error('incomplete download ' + got + '/' + total);
+  return { parts, got };
 }
 
 /* ---------- محرّك التشغيل (onnxruntime-web) ---------- */
@@ -127,14 +139,17 @@ async function hear(audio) {
   return { ph, probs };
 }
 
+// كل مرحلة تُسمّى في رسالة الخطأ، كي نعرف أين تعثّر التحميل على جهاز المستخدم
+const stage = (name, p) => p.catch((e) => { throw new Error(name + ': ' + ((e && e.message) || e)); });
+
 async function load() {
   post({ type: 'progress', phase: 'runtime' });
-  const [, bytes] = await Promise.all([loadOrt(), modelBytes(MODEL_URL)]);
+  const [, bytes] = await Promise.all([stage('runtime', loadOrt()), stage('model', modelBytes(MODEL_URL))]);
   post({ type: 'progress', phase: 'start' });
-  sess = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
-  await loadFE();
-  await hear(new Float32Array(RATE)); // تحمية
-  return { device: 'wasm', model: 'HisnLabs/tajweed-v2', threads: ort.env.wasm.numThreads };
+  sess = await stage('session', ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }));
+  await stage('features', loadFE());
+  await stage('warmup', hear(new Float32Array(RATE))); // تحمية
+  return { device: 'wasm', model: 'Hisnlabs/tajweed-v2', threads: ort.env.wasm.numThreads };
 }
 
 self.onmessage = async (e) => {

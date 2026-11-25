@@ -293,23 +293,34 @@
   /* ---------- محرّك «المعلّم»: نموذج HisnLabs Tajweed v2 على الجهاز (تجريبي) ----------
    * لا يكتب كلمات بل يسمع الأصوات، فيحكم على كل كلمة بمقارنتها بالمرجع الصوتي للآيات (js/phonetic.js).
    * أسرع بكثير من Whisper: يسمع المقطع دفعة واحدة، وحجمه ٢٣ م.ب. */
-  const CTC_MODEL_URL = 'https://huggingface.co/HisnLabs/tajweed-v2/resolve/main/onnx/model-int8.onnx';
+  const CTC_MODEL_URL = 'https://huggingface.co/Hisnlabs/tajweed-v2/resolve/main/onnx/model-int8.onnx';
   const CTC_DATA_URL = 'data/quran-ph.txt?v=1';
   const CtcEngine = {
     worker: null, ready: false, loading: null, info: null, fast: true, ref: null,
     pending: new Map(), id: 0, listeners: new Set(),
     async loadRef() {
       if (this.ref) return this.ref;
+      // إن كانت الصفحة من نسخة أقدم (من ذاكرة الجهاز) لا تحمّل js/phonetic.js، نحمّله هنا
+      if (!root.Phonetic) {
+        await new Promise((res, rej) => {
+          const sc = document.createElement('script');
+          sc.src = new URL('js/phonetic.js', root.location.href).href;
+          sc.onload = res;
+          sc.onerror = () => rej(err('ctc-load', 'script: js/phonetic.js'));
+          document.head.appendChild(sc);
+        });
+        if (!root.Phonetic) throw err('ctc-load', 'script: Phonetic');
+      }
       const url = new URL(CTC_DATA_URL, root.location.href).href;
       let r = null, store = null;
       try { store = await caches.open('tasmee-models'); r = await store.match(url); } catch (e) { /* ignore */ }
       if (!r) {
         r = await fetch(url);
-        if (!r.ok) throw err('ctc-load', 'HTTP ' + r.status);
+        if (!r.ok) throw err('ctc-load', 'data: HTTP ' + r.status);
         if (store) store.put(url, r.clone()).catch(() => {});
       }
       const ref = new root.Phonetic.Ref(await r.text());
-      if (!ref.ok) throw err('ctc-load', 'bad reference data');
+      if (!ref.ok) throw err('ctc-load', 'data: ' + ref.lines.length + ' lines');
       this.ref = ref;
       return ref;
     },
@@ -340,7 +351,7 @@
               if (m.type === 'result') p.res(m); else p.rej(err('engine-run', m.message));
             }
           };
-          w.onerror = (e) => { rej(err('ctc-load', e.message)); };
+          w.onerror = (e) => { rej(err('ctc-load', 'worker: ' + (e.message || 'failed to start'))); };
           w.postMessage({ type: 'load' });
         });
         this.loading = Promise.all([this.loadRef(), model]).then(([, info]) => {
@@ -429,7 +440,7 @@
           const was = this.active;
           this.active = false;
           this.close();
-          if (was) this.onError(code);
+          if (was) this.onError(code, e && e.code ? e.message : e && e.name);
           this.onState('idle');
         }
       })();

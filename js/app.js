@@ -364,9 +364,10 @@
     $('#md-ok').onclick = () => { S.modelOk = true; store.set('settings', S); closeSheet(); go(); };
     $('#md-no').onclick = () => { S.engine = 'browser'; saveSettings(); closeSheet(); go(); };
   }
-  function micError(code) {
-    const msg = MIC_ERR[code] || 'حدث خطأ في الاستماع. أعد المحاولة.';
-    toast(msg, 4500);
+  function micError(code, detail) {
+    // التفاصيل التقنية (مثل «model: HTTP 404») تساعد على معرفة سبب تعذّر التحميل
+    const msg = (MIC_ERR[code] || 'حدث خطأ في الاستماع. أعد المحاولة.') + (detail && /load|unsupported/.test(code) ? ` (${detail})` : '');
+    toast(msg, 7000);
     const h = $('#r-heard');
     if (h && !$('#reader').hidden) { h.textContent = msg; h.classList.remove('on'); }
   }
@@ -1369,7 +1370,7 @@
         const st = $('#eng-st');
         C.ensure((t) => { if (t && st.isConnected) st.textContent = t; })
           .then(() => { toast('«المعلّم» جاهز'); if ($('#eng-panel')) renderEngPanel(); })
-          .catch(() => { if (st.isConnected) st.textContent = MIC_ERR['ctc-load']; lb.disabled = false; });
+          .catch((e) => { if (st.isConnected) st.textContent = MIC_ERR['ctc-load'] + (e && e.message ? ` (${e.message})` : ''); lb.disabled = false; });
       };
     } else if (S.engine === 'server') {
       box.innerHTML = `<p class="note">شغّل الخادم المرفق في مجلد <b dir="ltr">server</b> على Hugging Face Spaces مجاناً، ثم الصق رابطه هنا. مناسب للجوالات البطيئة.</p>
