@@ -377,7 +377,7 @@
   function openReader(o) {
     stopListening(); stopAudio();
     const built = buildText(o.blocks);
-    Object.assign(R, { kind: o.kind, ref: o.ref, title: o.title, sub: o.sub || '', lang: o.lang || 'ar-SA', t0: 0, sid: null, log: '', live: [], vcur: null, extra: o.extra || {}, words: built.words, ayahs: built.ayahs });
+    Object.assign(R, { kind: o.kind, ref: o.ref, title: o.title, sub: o.sub || '', lang: o.lang || 'ar-SA', t0: 0, sid: null, log: '', live: [], vcur: null, finished: false, extra: o.extra || {}, words: built.words, ayahs: built.ayahs });
     R.sess = new M.Session(built.words, { strictness: S.strict });
     const box = $('#r-text');
     box.innerHTML = `<div class="page" dir="${o.dir || 'rtl'}">${built.html}</div>`;
@@ -385,7 +385,16 @@
     for (const el of $$('.w', box)) R.els[+el.dataset.i] = el;
     $('#r-title').textContent = o.title;
     $('#r-sub').textContent = o.sub || '';
-    let pos = o.pos || 0;
+    if (o.restore && o.restore.st && o.restore.n === R.sess.N) {
+      const rs = o.restore;
+      R.sess.state = rs.st.split('').map((c) => CH2ST[c] || 'p');
+      R.sess.pos = clamp(rs.pos | 0, 0, R.sess.N);
+      R.sess.start = clamp(rs.start | 0, 0, R.sess.N);
+      for (const k in rs.heard) R.sess.heard[+k] = rs.heard[k];
+      R.sid = rs.sid || null;
+      R.t0 = rs.el ? Date.now() - rs.el : 0;
+    }
+    let pos = o.restore ? 0 : o.pos || 0;
     if (o.ayah) { const a = R.ayahs.find((x) => x.k === o.ayah); if (a) pos = a.start; }
     if (pos) R.sess.setPos(pos);
     setHidden(S.hidden, true);
@@ -404,6 +413,7 @@
 
   function closeReader() {
     stopListening(); stopAudio();
+    if (R.sess) saveResume({ done: !!R.finished });
     const saved = R.sess && R.sess.stats().judged ? saveSession() : Promise.resolve();
     $('#reader').hidden = true;
     if ($('#bookview').hidden) document.body.style.overflow = '';
@@ -538,24 +548,82 @@
   function resetReader() {
     stopListening();
     R.sess.reset(R.sess.start);
-    R.sid = null; R.t0 = 0; R.log = ''; R.live = []; R.vcur = null;
-    paintAll(); updateStats();
+    R.sid = null; R.t0 = 0; R.log = ''; R.live = []; R.vcur = null; R.finished = false;
+    paintAll(); updateStats(); saveResume();
     const h = $('#r-heard'); h.classList.remove('on'); h.textContent = 'بدأنا من جديد. اضغط الميكروفون واقرأ';
     scrollToCur(true);
   }
-  function saveResume() {
+  // حفظ الجلسة كاملة (حالة كل كلمة والموضع والمدة) كي تتابع من حيث توقفت بعد إغلاق التطبيق
+  const ST2CH = { p: 'p', ok: 'o', err: 'e', skip: 's', hint: 'h' };
+  const CH2ST = { p: 'p', o: 'ok', e: 'err', s: 'skip', h: 'hint' };
+  function saveResume(extra) {
     if (!R.sess) return;
-    store.set('resume', { kind: R.kind, ref: R.ref, title: R.title, sub: R.sub, pos: R.sess.pos, from: R.extra.from, to: R.extra.to });
+    const heard = {};
+    R.sess.state.forEach((st, i) => { if (st === 'err' && R.sess.heard[i]) heard[i] = R.sess.heard[i]; });
+    store.set('session', Object.assign({
+      v: 1, kind: R.kind, ref: R.ref, title: R.title, sub: R.sub, lang: R.lang,
+      from: R.extra.from, to: R.extra.to,
+      pos: R.sess.pos, start: R.sess.start, n: R.sess.N,
+      st: R.sess.state.map((x) => ST2CH[x] || 'p').join(''), heard,
+      sid: R.sid, el: R.t0 ? Date.now() - R.t0 : 0, at: Date.now(), done: false,
+    }, extra || {}));
+  }
+  function lastSession() {
+    const r = store.get('session', null);
+    if (r && r.title) return r;
+    const old = store.get('resume', null); // توافق مع النسخة السابقة
+    return old && old.title ? old : null;
+  }
+  function openFromState(r) {
+    if (r.kind === 'quran') openSurah(r.ref, { pos: r.pos, restore: r });
+    else openBookReader(r.ref, { from: r.from, to: r.to, pos: r.pos, restore: r });
+  }
+  let autoResumed = false;
+  function maybeAutoResume() {
+    if (autoResumed) return;
+    autoResumed = true;
+    const r = lastSession();
+    if (!r || r.done || !r.st || !/[oesh]/.test(r.st)) return;
+    if (Date.now() - (r.at || 0) > 12 * 3600 * 1000) return;
+    openFromState(r);
+    setTimeout(() => { if (!$('#reader').hidden) toast('تابعنا من حيث توقفت'); }, 600);
+  }
+  /** حفظ ما سُمّع قبل أن يُغلق التطبيق، كي لا يضيع التقدّم */
+  function parkSession() {
+    if (R.listener) stopListening();
+    if (!R.sess) return;
+    saveResume({ done: !!R.finished || R.sess.done });
+    if (R.sess.stats().judged) saveSession();
   }
   async function saveSession() {
+    if (!R.sess) return null;
     const st = R.sess.stats();
     if (!st.judged) return null;
     if (!R.sid) R.sid = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     const rec = { id: R.sid, kind: R.kind, ref: R.ref, title: R.title, date: Date.now(), ok: st.ok, err: st.err, hint: st.hint, skip: st.skip, judged: st.judged, total: st.total, accuracy: st.accuracy, hidden: !!S.hidden, dur: R.t0 ? Math.round((Date.now() - R.t0) / 1000) : 0 };
+    // نسخة فورية: الكتابة في قاعدة البيانات قد لا تكتمل إن أُغلق التطبيق الآن
+    store.set('pending', rec);
     await DB.put('sessions', rec.id, rec);
+    const p = store.get('pending', null);
+    if (p && p.id === rec.id && p.judged <= rec.judged) store.set('pending', null);
     if (window.Cloud && Cloud.user) Cloud.logSession(rec).catch((e) => console.warn('sync', e));
     SESS = null;
     return rec;
+  }
+  /** جلسة لم تكتمل كتابتها قبل إغلاق التطبيق: نحفظها عند التشغيل التالي */
+  async function flushPending() {
+    const rec = store.get('pending', null);
+    if (!rec || !rec.id) return;
+    try {
+      const cur = await DB.get('sessions', rec.id);
+      if (!cur || (cur.judged || 0) < rec.judged) {
+        await DB.put('sessions', rec.id, rec);
+        if (window.Cloud && Cloud.user) Cloud.logSession(rec).catch(() => {});
+      }
+      SESS = null;
+    } catch (e) { return; }
+    const p = store.get('pending', null);
+    if (p && p.id === rec.id) store.set('pending', null);
   }
 
   async function finish() {
@@ -567,7 +635,9 @@
     }
     const st = R.sess.stats();
     if (!st.judged) { toast('لم تقرأ شيئاً بعد. اضغط الميكروفون وابدأ.'); return; }
+    R.finished = true;
     saveSession();
+    saveResume({ done: true });
     const dur = R.t0 ? Math.round((Date.now() - R.t0) / 1000) : 0;
     const errs = [];
     R.sess.state.forEach((s, i) => { if (s === 'err') errs.push(i); });
@@ -667,14 +737,16 @@
     const blocks = [{ type: 'title', text: s.name }];
     if (s.basmala) blocks.push({ type: 'basmala', text: s.basmala });
     for (const a of s.ayahs) blocks.push({ type: 'ayah', k: a.k, g: a.g, toks: M.tokenize(a.text) });
-    openReader({ kind: 'quran', ref: n, title: 'سورة ' + shortName(s.name), sub: (meta ? typeAr(meta.type) + ' · ' : '') + AR(s.ayahs.length) + ' آية', blocks, lang: S.lang, pos: o.pos, ayah: o.ayah });
+    openReader({ kind: 'quran', ref: n, title: 'سورة ' + shortName(s.name), sub: (meta ? typeAr(meta.type) + ' · ' : '') + AR(s.ayahs.length) + ' آية', blocks, lang: S.lang, pos: o.pos, ayah: o.ayah, restore: o.restore });
   }
   function renderContinue() {
-    const r = store.get('resume', null);
+    const r = lastSession();
     const el = $('#continue');
     if (!r || !r.title) { el.innerHTML = ''; return; }
-    el.innerHTML = `<button class="cont" id="cont-btn"><div><span class="k">تابع من حيث توقفت</span><b>${esc(r.title)}</b><span class="k">${esc(r.sub || '')}</span></div><span class="go"><svg><use href="#i-back"/></svg></span></button>`;
-    $('#cont-btn').onclick = () => { if (r.kind === 'quran') openSurah(r.ref, { pos: r.pos }); else openBookReader(r.ref, { from: r.from, to: r.to, pos: r.pos }); };
+    const pct = r.n ? Math.round((r.pos / r.n) * 100) : 0;
+    const line = [r.sub || '', r.n && !r.done ? `أتممتَ ${AR(pct)}٪` : r.done ? 'اكتملت' : ''].filter(Boolean).join(' · ');
+    el.innerHTML = `<button class="cont" id="cont-btn"><div><span class="k">${r.done ? 'آخر تسميع' : 'تابع من حيث توقفت'}</span><b>${esc(r.title)}</b><span class="k">${esc(line)}</span></div><span class="go"><svg><use href="#i-back"/></svg></span></button>`;
+    $('#cont-btn').onclick = () => openFromState(r);
   }
 
   function openVoiceSearch(autoMic) {
@@ -934,7 +1006,7 @@
     if (!blocks.some((x) => x.type === 'para')) { toast('لا يوجد نص في هذه الصفحات. استخرج النص أو عدّله يدوياً أولاً.', 4000); return; }
     b.last = { from, to }; b.used = Date.now();
     DB.put('books', b.id, b);
-    openReader({ kind: 'book', ref: b.id, title: b.name, sub: from === to ? `صفحة ${AR(from)}` : `الصفحات ${AR(from)}–${AR(to)}`, blocks, lang: b.lang, pos: o.pos || 0, extra: { from, to }, dir: b.lang === 'en-US' ? 'ltr' : 'rtl' });
+    openReader({ kind: 'book', ref: b.id, title: b.name, sub: from === to ? `صفحة ${AR(from)}` : `الصفحات ${AR(from)}–${AR(to)}`, blocks, lang: b.lang, pos: o.pos || 0, restore: o.restore, extra: { from, to }, dir: b.lang === 'en-US' ? 'ltr' : 'rtl' });
   }
   async function renderPage(doc, p, scale) {
     const page = await doc.getPage(p);
@@ -1268,6 +1340,8 @@
     if (Cloud.profile && Cloud.profile.status === 'blocked') { showAuth('blocked'); return; }
     setAdminUI();
     hideAuth();
+    flushPending();
+    maybeAutoResume();
   }
   async function doLogout() {
     closeSheet();
@@ -1446,8 +1520,8 @@
     $('#bv-del').onclick = () => confirmSheet('حذف الكتاب؟', `سيُحذف «${BV.book.name}» من جهازك.`, 'احذف', async () => {
       const id = BV.book.id;
       await DB.del('books', id); await DB.del('pdfs', id);
-      const r = store.get('resume', null);
-      if (r && r.ref === id) { store.set('resume', null); renderContinue(); }
+      const r = lastSession();
+      if (r && r.ref === id) { store.set('session', null); store.set('resume', null); renderContinue(); }
       navBack();
     });
     $('#bv-start').onclick = () => { const { from, to } = bvRange(); openBookReader(BV.book.id, { from, to }); };
@@ -1485,16 +1559,19 @@
       const w = e.target.closest('.w');
       if (w && R.sess) wordSheet(+w.dataset.i);
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && R.listener) stopListening(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) parkSession(); });
+    window.addEventListener('pagehide', parkSession);
   }
 
   function init() {
     if (window.__ASR_LIB) window.ASR.LocalEngine.lib = window.__ASR_LIB;
     applySettings();
     bind();
+    flushPending();
     initAuth();
     loadSurahs();
     renderContinue();
+    if (!Cloud || !Cloud.configured || !Cloud.requireLogin || store.get('lastUser', null)) maybeAutoResume();
     refreshMemo();
     try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySettings); } catch (e) { /* ignore */ }
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {

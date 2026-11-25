@@ -1,5 +1,5 @@
 /* عامل الخدمة: يجعل التطبيق يعمل دون اتصال بعد أول فتح */
-const VERSION = 'tasmee-v7';
+const VERSION = 'tasmee-v8';
 const SHELL = [
   './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
@@ -7,7 +7,12 @@ const SHELL = [
 const RUNTIME = 'tasmee-runtime';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const c = await caches.open(VERSION);
+    // كل ملف على حدة: ملف ناقص لا يُفشل التخزين كله (وإلا أعاد التطبيق التحميل في كل فتحة)
+    await Promise.all(SHELL.map((u) => c.add(new Request(u, { cache: 'reload' })).catch(() => {})));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {

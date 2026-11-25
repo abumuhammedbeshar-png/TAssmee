@@ -36,7 +36,17 @@
 
   const userRef = (uid) => F.doc(db, 'users', uid);
   const ms = (v) => (v == null ? 0 : typeof v === 'number' ? v : v.toMillis ? v.toMillis() : v.seconds ? v.seconds * 1000 : +new Date(v) || 0);
-  const synced = {}; // ما رُفع من كل جلسة، كي لا تُحسب الكلمات مرتين
+  // ما رُفع من كل جلسة، كي لا تُحسب الكلمات مرتين — يبقى بعد إغلاق التطبيق
+  const SYNC_KEY = 'tasmee:synced';
+  let synced = {};
+  try { synced = JSON.parse(localStorage.getItem(SYNC_KEY) || '{}') || {}; } catch (e) { synced = {}; }
+  function saveSynced() {
+    try {
+      const ks = Object.keys(synced);
+      if (ks.length > 60) ks.slice(0, ks.length - 60).forEach((k) => delete synced[k]);
+      localStorage.setItem(SYNC_KEY, JSON.stringify(synced));
+    } catch (e) { /* ignore */ }
+  }
 
   const Cloud = {
     configured,
@@ -105,6 +115,7 @@
       if (!synced[rec.id]) patch.sessions = F.increment(1);
       await F.updateDoc(userRef(uid), patch);
       synced[rec.id] = { judged: rec.judged, ok: rec.ok };
+      saveSynced();
     },
 
     /* ---------- للمدير ---------- */
