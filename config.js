@@ -7,16 +7,16 @@
  */
 window.TASMEE_CONFIG = {
   firebase: {
-    apiKey: '',
-    authDomain: '',
-    projectId: '',
-    storageBucket: '',
-    messagingSenderId: '',
-    appId: '',
+    apiKey: 'AIzaSyAmtVDYi8ulIhCJDPxoEaMaFqfFhntBFzQ',
+    authDomain: 'bashar-4b559.firebaseapp.com',
+    projectId: 'bashar-4b559',
+    storageBucket: 'bashar-4b559.firebasestorage.app',
+    messagingSenderId: '976411703498',
+    appId: '1:976411703498:web:99f34ae7f82e676ef11c33',
   },
 
   // بريد المدير (أو المدراء): له صلاحية لوحة إدارة المستخدمين. ضع البريد نفسه في firestore.rules
-  adminEmails: ['you@example.com'],
+  adminEmails: ['sluk2hm@gmail.com'],
 
   // true: لا يُستخدم التطبيق إلا بعد تسجيل الدخول
   requireLogin: true,

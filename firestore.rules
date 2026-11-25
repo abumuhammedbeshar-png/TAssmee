@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // قواعد الحماية لقاعدة بيانات «تسميع» في Firebase Firestore
-// ضع بريد المدير بدل you@example.com (بأحرف صغيرة)، ثم الصق الملف كاملاً في:
+// الصق هذا الملف كاملاً في:
 // Firebase console ← Firestore Database ← Rules ← Publish
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -11,7 +11,7 @@ service cloud.firestore {
     function profile(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
     function isAdmin() {
       return signedIn() && (
-        (request.auth.token.email.lower() in ['you@example.com'] && request.auth.token.email_verified == true)
+        (request.auth.token.email.lower() in ['sluk2hm@gmail.com'] && request.auth.token.email_verified == true)
         || profile(request.auth.uid).role == 'admin'
       );
     }
