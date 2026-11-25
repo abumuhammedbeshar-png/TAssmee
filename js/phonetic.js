@@ -160,14 +160,20 @@
   /* ---------- المحاذاة ---------- */
   const NEAR = { 'ں': 'ن', '۾': 'م', 'ـ': 'ا', 'ٲ': 'ء', 'ۦ': 'ي', 'ۥ': 'و' };
   const NASAL = 'نمں۾';
+  // حروف متقاربة المخرج: الخلط بينها خطأ نطق (تجويد) لا خطأ حفظ، وكثيراً ما يخلط بينها النموذج نفسه
+  const SIMILAR = new Set(['ثس', 'ذز', 'ذظ', 'ظض', 'ضد', 'صس', 'طت', 'قك', 'حه', 'عء', 'غخ', 'زظ', 'سش', 'ثف', 'دت', 'زس', 'ءا', 'ءي', 'ءو']
+    .flatMap((p) => [p, p[1] + p[0]]));
+  // المدود والهمزة: طول المدّ وتسهيل الهمزة من التجويد، والنموذج قد لا يسمعها في القراءة السريعة
+  const WEAK = 'اۦۥءـٲ';
   function sub(a, b) {
     if (a === b) return 0;
     if ((NEAR[a] || a) === (NEAR[b] || b)) return 0.3;
     if (NASAL.includes(a) && NASAL.includes(b) && ('ں۾'.includes(a) || 'ں۾'.includes(b))) return 0.3;
+    if (SIMILAR.has(a + b) || SIMILAR.has((NEAR[a] || a) + (NEAR[b] || b))) return 0.45;
     return 1;
   }
-  const insCost = (H, i) => (i === 0 && H[0] === 'ء' ? 0.15 : 1);       // همزة الوصل عند الابتداء
-  const delCost = (W, F, j) => (W[j] === 'ء' && F[j] & 1 ? 0.2 : 1);     // همزة أول الآية تسقط وصلاً
+  const insCost = (H, i) => (i === 0 && H[0] === 'ء' ? 0.15 : WEAK.includes(H[i]) ? 0.4 : 1);           // همزة الوصل عند الابتداء
+  const delCost = (W, F, j) => (W[j] === 'ء' && F[j] & 1 ? 0.2 : WEAK.includes(W[j]) ? 0.4 : 1);     // همزة أول الآية تسقط وصلاً
 
   /**
    * محاذاة ما سُمع H كاملاً مع جزء من المرجع W. النهاية في W حرّة، والبداية حرّة فيما قبل موضع القارئ
@@ -278,14 +284,14 @@
    * L: عدد رموز الكلمة. المتوسطة: الحرف المختلف بثقة خطأ دائماً، ويُتجاوز عن نقص حرف في الكلمة الطويلة.
    */
   function verdict(hard, soft, L, strict) {
-    if (strict === 'low') {
-      const tol = L >= 10 ? 2 : L >= 5 ? 1 : 0, e = hard + soft;
-      return e <= tol + 1e-6 ? 'ok' : e <= tol + 1 + 1e-6 ? 'skip' : 'err';
+    if (strict === 'high') {
+      if (hard > 0) return 'err';
+      return soft <= 0.5 + 1e-6 ? 'ok' : soft <= 0.75 + 1e-6 ? 'skip' : 'err';
     }
-    if (hard > 0) return 'err';
-    // حرف ناقص واحد قد يكون من سرعة القراءة لا خطأً: «غير مؤكد» في المتوسطة، و«خطأ» في الصارمة
-    const tol = strict === 'high' ? 0 : L >= 7 ? 1 : 0;
-    return soft <= tol + 1e-6 ? 'ok' : soft <= tol + (strict === 'high' ? 0.5 : 1) + 1e-6 ? 'skip' : 'err';
+    // المتوسطة والمتساهلة: ما سُمع قريباً من الكلمة يُحسب صحيحاً، والخطأ ما اختلف بوضوح
+    const tol = strict === 'low' ? (L >= 8 ? 2.5 : L >= 4 ? 1.75 : 1) : (L >= 8 ? 2 : L >= 4 ? 1.25 : 0.75);
+    const hardTol = strict === 'low' ? (L >= 6 ? 1 : 0) : 0;
+    return hard <= hardTol && soft <= tol + 1e-6 ? 'ok' : 'err';
   }
 
   /**
@@ -313,28 +319,28 @@
     const nearOf = (w) => { const k = w.wi.findIndex((g) => g >= pos); return k < 0 ? w.W.length : k; };
     let a = win.W.length ? align(H, win.W, win.F, preOf(win), nearOf(win)) : null;
     let jumped = false;
-    const good = (x, lim) => x && x.cost / n <= lim && x.ops.filter((o) => o.t === 'M').length >= n * 0.5;
+    const good = (x, lim) => x && x.cost / n <= lim && x.ops.filter((o) => o.t === 'M').length >= n * 0.45;
 
-    if (!good(a, 0.4)) {
+    if (!good(a, 0.5)) {
       // القارئ ليس حيث نظن: نبحث في النص كله
-      if (n < 10) return { judged: [], pos, jumped: false, text: text0, preview: [] };
+      if (n < 10) return { judged: [], pos, jumped: false, text: '', preview: [], heard: text0 };
       const all = ref.window(ctx, 0, N);
       if (!all.W.length) return null;
       let near = all.wi.findIndex((g) => g >= pos);
       if (near < 0) near = all.W.length;
       const r = locate(H, all.W, all.F, near);
-      if (r.cost / n > 0.3) return { judged: [], pos, jumped: false, text: text0, preview: [] };
+      if (r.cost / n > 0.35) return { judged: [], pos, jumped: false, text: '', preview: [], heard: text0 };
       const s = Math.max(0, r.jStart - 2), e = Math.min(all.W.length, r.jEnd + 2);
       lo = all.wi[s]; hi = all.wi[e - 1] + 1;
       win = ref.window(ctx, lo, hi);
       a = align(H, win.W, win.F, null, nearOf(win));   // موضع جديد وجدناه بالبحث: بدايته حرّة
-      if (!good(a, 0.3)) return { judged: [], pos, jumped: false, text: text0, preview: [] };
+      if (!good(a, 0.35)) return { judged: [], pos, jumped: false, text: '', preview: [], heard: text0 };
       jumped = true;
     }
 
     const { W, wi, F } = win;
     const { ops, jStart, jEnd } = a;
-    if (jEnd <= jStart) return { judged: [], pos, jumped: false, text: text0, preview: [] };
+    if (jEnd <= jStart) return { judged: [], pos, jumped: false, text: '', preview: [], heard: text0 };
     const wFirst = wi[jStart], wLast = wi[jEnd - 1];
 
     // حدود كل كلمة في المرجع
@@ -350,13 +356,13 @@
     for (const o of ops) {
       if (o.t === 'I') {
         const w = o.j > jStart ? wi[o.j - 1] : wi[Math.min(o.j, jEnd - 1)];
-        P(w).e.push({ t: 'I', j: o.j, h: H[o.i], r: '', wt: weight(o.i) });
+        P(w).e.push({ t: 'I', j: o.j, h: H[o.i], r: '', wt: WEAK.includes(H[o.i]) ? 0.25 : weight(o.i) });
         P(w).hi.push(o.i);
       } else {
         const w = wi[o.j];
         if (o.t !== 'D') P(w).hi.push(o.i);
         if (o.t === 'S') P(w).e.push({ t: 'S', j: o.j, h: H[o.i], r: W[o.j], wt: weight(o.i) });
-        else if (o.t === 'D') P(w).e.push({ t: 'D', j: o.j, h: '', r: W[o.j], wt: W[o.j] === 'ء' && F[o.j] & 1 ? 0 : 1 });
+        else if (o.t === 'D') P(w).e.push({ t: 'D', j: o.j, h: '', r: W[o.j], wt: W[o.j] === 'ء' && F[o.j] & 1 ? 0 : WEAK.includes(W[o.j]) ? 0.25 : 1 });
       }
     }
     // أول كلمة بدأ القارئ من وسطها، أو آخر كلمة توقّف قبل تمامها: الحروف الناقصة فروق
@@ -384,7 +390,7 @@
       // همزة الوصل في أول الكلمة عند الابتداء، أو سقوطها عند الوصل
       if (w === wFirst || ayahStart) edits = edits.filter((d) => !(d.j <= s && (d.h === 'ء' || d.r === 'ء')));
       let hard = 0, soft = 0;
-      for (const d of edits) if (d.t !== 'D' && d.wt >= 1) hard++; else soft += d.wt;
+      for (const d of edits) if (d.t === 'S' && d.wt >= 1) hard++; else soft += d.wt;
       const st = verdict(hard, soft, L, ctx.strict || 'mid');
       const heard = display(x.hi.filter((i) => i >= 0).sort((p, q) => p - q).map((i) => G[i]));
       judged.push({ i: w, st, heard, ayahEnd: !!ayahEnd });
@@ -413,8 +419,8 @@
     if (!jumped && newPos < pos) newPos = pos;
 
     const all = before.concat(judged).map(({ i, st, heard }) => ({ i, st, heard }));
-    const text = judged.map((j) => (j.st === 'err' ? j.heard || '…' : ctx.words[j.i].disp || ctx.words[j.i])).join(' ');
-    return { judged: all, pos: newPos, jumped, text: text || text0, preview: judged.filter((j) => j.st === 'ok').map((j) => j.i) };
+    const text = judged.filter((j) => j.st !== 'skip').map((j) => (j.st === 'err' ? `«${j.heard || '…'}»` : ctx.words[j.i].disp || ctx.words[j.i])).join(' ');
+    return { judged: all, pos: newPos, jumped, text, preview: judged.filter((j) => j.st === 'ok').map((j) => j.i), heard: text0 };
   }
 
   /** لما لا سياق له (البحث بالتلاوة): نصّ تقريبي مما سُمع */

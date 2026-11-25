@@ -98,20 +98,31 @@ t('حرف مبدَّل بثقة عالية = خطأ، ويُعرض ما سُمع
   assert.ok(r.judged.find((j) => j.i === w).heard.includes('ق'));
 });
 
-t('الفرق الذي لم يتأكد منه النموذج = «غير مؤكد» لا خطأ (وفي الكلمة الطويلة يُتجاوز عنه)', () => {
+t('الفرق الذي لم يتأكد منه النموذج: صحيحة في المتوسطة، و«غير مؤكدة» في الصارمة', () => {
   const c = ctxOf('2');
   const a = wordIdx(c, 5);
   const good = say(c, a, a + 8);
-  // «هُمُ» قصيرة: فرق غير مؤكد ← غير مؤكدة
-  const k = good.indexOf('وءلاءكهم') + 6;
-  const g = gs(good.slice(0, k) + 'ح' + good.slice(k + 1));
+  const k = good.indexOf('وءلاءكهم') + 6; // «هُمُ»
+  const g = gs(good.slice(0, k) + 'ب' + good.slice(k + 1));
   g[k].p = 0.7;
-  assert.strictEqual(st(P.judge(ref, g, { ...c, pos: a }), a + 6), 'skip');
-  // «الْمُفْلِحُونَ» طويلة: فرق غير مؤكد واحد ← صحيحة
-  const k2 = good.indexOf('لمفلحۥن') + 3;
-  const g2 = gs(good.slice(0, k2) + 'ق' + good.slice(k2 + 1));
-  g2[k2].p = 0.7;
-  assert.strictEqual(st(P.judge(ref, g2, { ...c, pos: a }), a + 7), 'ok');
+  assert.strictEqual(st(P.judge(ref, g, { ...c, pos: a }), a + 6), 'ok');
+  assert.strictEqual(st(P.judge(ref, g, { ...c, pos: a, strict: 'high' }), a + 6), 'skip');
+});
+
+t('خطأ النطق في حرف متقارب المخرج (الذين ← الزين) ليس خطأ حفظ', () => {
+  const c = ctxOf('1');
+  const a = wordIdx(c, 7);
+  const h = say(c, a, a + 3).replace('لذۦن', 'لزۦن');
+  const r = P.judge(ref, gs(h), { ...c, pos: a });
+  assert.ok(r.judged.every((j) => j.st === 'ok'), sts(r));
+});
+
+t('مدّ أو همزة لم يسمعها النموذج لا تُخطّئ الكلمة', () => {
+  const c = ctxOf('1');
+  const a = wordIdx(c, 2);
+  const h = say(c, a, a + 4).replace('لعالمۦن', 'لعلمن').replace('ءلحمد', 'لحمد');
+  const r = P.judge(ref, gs(h), { ...c, pos: a });
+  assert.ok(r.judged.every((j) => j.st === 'ok'), sts(r));
 });
 
 t('كلمة أُسقطت = خطأ', () => {
@@ -174,7 +185,7 @@ t('كلمة اندمج لفظها في جارتيها (قُل لَّن يُصِ�
   assert.strictEqual(r.pos, c.ayahs.find((x) => x.k === 52).start);
 });
 
-t('الصارمة لا تتسامح، والمتساهلة تتجاوز عن حرف في الكلمة الطويلة', () => {
+t('حرف ناقص: خطأ في الصارمة، ويُتجاوز عنه في المتساهلة', () => {
   const c = ctxOf('2');
   const a = wordIdx(c, 4); // وَالَّذِينَ يُؤْمِنُونَ بِمَا أُنزِلَ إِلَيْكَ …
   const good = say(c, a, a + 5);

@@ -298,6 +298,7 @@
   const CtcEngine = {
     worker: null, ready: false, loading: null, info: null, fast: true, ref: null,
     pending: new Map(), id: 0, listeners: new Set(),
+    log: [], // للتشخيص: آخر العبارات (ما سُمع، والمتوقع، والحكم)
     async loadRef() {
       if (this.ref) return this.ref;
       // إن كانت الصفحة من نسخة أقدم (من ذاكرة الجهاز) لا تحمّل js/phonetic.js، نحمّله هنا
@@ -379,7 +380,19 @@
       const gs = P.groups(r.ph, r.probs);
       const ctx = opt && opt.ctx;
       if (!ctx || !ctx.ayahs || !ctx.ayahs.length) return P.roughText(gs);
-      return P.judge(this.ref, gs, ctx) || { judged: [], pos: ctx.pos, text: '', preview: [] };
+      const out = P.judge(this.ref, gs, ctx) || { judged: [], pos: ctx.pos, text: '', preview: [], heard: P.display(gs) };
+      if (opt.final && gs.length) {
+        const js = out.judged.filter((j) => j.st !== 'skip' || j.heard);
+        const lo = js.length ? js[0].i : -1, hi = js.length ? js[js.length - 1].i + 1 : -1;
+        this.log.unshift({
+          heard: out.heard || P.display(gs),
+          expected: lo >= 0 ? this.ref.window(ctx, lo, hi).W.join('') : '',
+          words: js.map((j) => ({ w: (ctx.words[j.i] && (ctx.words[j.i].disp || ctx.words[j.i])) || '', st: j.st, heard: j.heard })),
+          ms: r.ms,
+        });
+        this.log.length = Math.min(this.log.length, 8);
+      }
+      return out;
     },
     async stored() {
       try {

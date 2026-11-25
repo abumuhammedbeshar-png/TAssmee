@@ -1354,7 +1354,11 @@
       box.innerHTML = `<p class="note">«المعلّم» نموذج مفتوح (HisnLabs Tajweed v2) يسمع الأصوات لا الكلمات، فيقارن تلاوتك بالآيات حرفاً حرفاً ولا «يصحّح» خطأك تلقائياً كما تفعل نماذج الكتابة. يعمل داخل جهازك دون إنترنت بعد تحميله مرة واحدة (نحو ٣٣ م.ب)، ويصحّح فور كل وقفة حتى على الجوالات المتوسطة.</p>
         <p class="note">تجريبي: دُرّب أكثره على أصوات قرّاء رجال، فقد تقلّ دقته مع غيرهم. الحرف الذي لم يتأكد منه يُعلَّم «لم تُتحقَّق» لا «خطأ». البحث بالتلاوة يستخدم محرّكاً آخر.</p>
         <p class="note" id="eng-st">${esc(C.ready ? `جاهز على جهازك · ${C.info && C.info.threads > 1 ? 'عدة أنوية' : 'نواة واحدة'}` : C.loading ? 'جارٍ التحميل…' : 'لم يُحمَّل بعد.')}</p>
-        ${C.ready ? '' : '<button class="btn ghost sm" id="eng-load" type="button">حمّل «المعلّم» الآن</button>'}${books}`;
+        ${C.ready ? '' : '<button class="btn ghost sm" id="eng-load" type="button">حمّل «المعلّم» الآن</button>'}
+        ${C.log.length ? `<details class="ctc-log"><summary>تشخيص: آخر ما سمعه «المعلّم»</summary>${C.log.map((x) => `<div class="note" dir="rtl" style="border-top:1px solid var(--line,#ddd);padding-top:.4em">
+          <div><b>سُمع:</b> ${esc(x.heard)}</div><div><b>المتوقَّع:</b> ${esc(x.expected || '—')}</div>
+          <div><b>الحكم:</b> ${x.words.map((w) => `${esc(w.w)} ${w.st === 'ok' ? '✓' : w.st === 'err' ? `✗(${esc(w.heard || '')})` : '؟'}`).join(' · ') || 'لم يُطابق النص'}</div>
+          ${x.ms ? `<div><small>${AR(x.ms)} م.ث</small></div>` : ''}</div>`).join('')}</details>` : ''}${books}`;
       const lb = $('#eng-load');
       if (lb && !C.loading) {
         C.stored().then((k) => {
