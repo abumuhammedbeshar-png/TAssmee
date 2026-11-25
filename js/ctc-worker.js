@@ -5,6 +5,7 @@
  * المطابقة مع النص تجري في الصفحة (js/phonetic.js)؛ هنا السماع فقط.
  */
 import { makeResumableFetch } from './resumable.js';
+import { patchConvInteger } from './onnx-patch.js';
 
 const MODEL_URL = 'https://huggingface.co/Hisnlabs/tajweed-v2/resolve/main/onnx/model-int8.onnx';
 const ORT_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
@@ -139,6 +140,23 @@ async function hear(audio) {
   return { ph, probs };
 }
 
+/**
+ * onnxruntime-web لا يوفّر ConvInteger (طبقتا الالتفاف الأوليان في النموذج المضغوط)،
+ * فنستبدلها بعمليات قياسية مكافئة تماماً (js/onnx-patch.js) قبل إنشاء الجلسة.
+ * إن تعذّر التعديل أو فشلت الجلسة المعدّلة نجرّب الملف الأصلي.
+ */
+async function createSession(bytes) {
+  const opts = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' };
+  let patched = null;
+  try { const p = patchConvInteger(bytes); if (p.replaced) patched = p.bytes; } catch (e) { /* ملف بصيغة غير متوقعة */ }
+  if (!patched) return ort.InferenceSession.create(bytes, opts);
+  try {
+    return await ort.InferenceSession.create(patched, opts);
+  } catch (e) {
+    try { return await ort.InferenceSession.create(bytes, opts); } catch (e2) { throw e; }
+  }
+}
+
 // كل مرحلة تُسمّى في رسالة الخطأ، كي نعرف أين تعثّر التحميل على جهاز المستخدم
 const stage = (name, p) => p.catch((e) => { throw new Error(name + ': ' + ((e && e.message) || e)); });
 
@@ -146,7 +164,7 @@ async function load() {
   post({ type: 'progress', phase: 'runtime' });
   const [, bytes] = await Promise.all([stage('runtime', loadOrt()), stage('model', modelBytes(MODEL_URL))]);
   post({ type: 'progress', phase: 'start' });
-  sess = await stage('session', ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }));
+  sess = await stage('session', createSession(bytes));
   await stage('features', loadFE());
   await stage('warmup', hear(new Float32Array(RATE))); // تحمية
   return { device: 'wasm', model: 'Hisnlabs/tajweed-v2', threads: ort.env.wasm.numThreads };
