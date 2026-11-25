@@ -2,7 +2,21 @@
  * asr-worker.js — يشغّل نموذج ترتيل داخل المتصفح عبر transformers.js
  * يُحمَّل كـ Module Worker حتى لا يتجمّد التطبيق أثناء التعرّف.
  */
+import { makeResumableFetch } from './resumable.js';
+
 const DEFAULT_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+
+// ملفات النموذج تُحمَّل على أجزاء محفوظة، فيُستكمل التحميل بعد الخروج من التطبيق بدل البدء من الصفر.
+// نعرف أيضاً أي الملفات جاءت من الشبكة، وأيها من ذاكرة الجهاز (فلا نعرض «جارٍ التحميل» لنموذج محفوظ).
+const fetched = new Set();
+const RF = self.caches && self.fetch
+  ? makeResumableFetch({ fetch: self.fetch.bind(self), caches: self.caches, onNet: (u) => fetched.add(u) })
+  : null;
+if (RF) self.fetch = RF.fetch;
+const fromNet = (file) => {
+  for (const u of fetched) if (u.endsWith('/' + file)) return true;
+  return false;
+};
 
 let T = null;
 let asr = null;
@@ -34,9 +48,9 @@ async function load(model, lib) {
     if (p.status === 'progress') files[p.file] = [p.loaded || 0, p.total || 0];
     else if (p.status === 'done' && files[p.file]) files[p.file][0] = files[p.file][1];
     else return;
-    let l = 0, t = 0;
-    for (const k in files) { l += files[k][0]; t += files[k][1]; }
-    self.postMessage({ type: 'progress', loaded: l, total: t, file: p.file });
+    let l = 0, t = 0, net = false;
+    for (const k in files) { l += files[k][0]; t += files[k][1]; if (!net && fromNet(k)) net = true; }
+    self.postMessage({ type: 'progress', loaded: l, total: t, file: p.file, net });
   };
   const gpu = await gpuDtype();
   const tries = gpu ? [['webgpu', gpu], ['wasm', 'q8']] : [['wasm', 'q8']];
@@ -45,6 +59,7 @@ async function load(model, lib) {
     try {
       asr = await T.pipeline('automatic-speech-recognition', model, { device, dtype, progress_callback });
       await asr(new Float32Array(16000), { max_new_tokens: 4 }); // تجربة تحمية تكشف أعطال WebGPU مبكراً
+      if (RF) RF.tidy().catch(() => {}); // حذف أجزاء التحميل بعد أن حُفظت الملفات كاملة
       return { device, dtype, model };
     } catch (e) {
       last = e;

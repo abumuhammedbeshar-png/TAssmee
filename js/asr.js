@@ -198,6 +198,8 @@
       if (this.ready) return Promise.resolve(this.info);
       if (onStatus) this.listeners.add(onStatus);
       if (!this.loading) {
+        // نطلب من المتصفح ألا يحذف النموذج المحفوظ عند امتلاء الذاكرة
+        try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* ignore */ }
         this.loading = new Promise((res, rej) => {
           let w;
           try {
@@ -208,7 +210,8 @@
           w.onmessage = (e) => {
             const m = e.data;
             if (m.type === 'progress') {
-              if (m.total > 0) this.emit(`جارٍ تحميل نموذج ترتيل… ${AR(Math.min(99, Math.round((m.loaded / m.total) * 100)))}٪ (${fmtMB(m.loaded)} من ${fmtMB(m.total)} م.ب)`);
+              if (!m.net) this.emit('جارٍ تشغيل نموذج ترتيل المحفوظ على جهازك…');
+              else if (m.total > 0) this.emit(`جارٍ تحميل نموذج ترتيل… ${AR(Math.min(99, Math.round((m.loaded / m.total) * 100)))}٪ (${fmtMB(m.loaded)} من ${fmtMB(m.total)} م.ب) · يُستكمل من حيث توقف إن خرجت`);
             } else if (m.type === 'ready') {
               this.ready = true; this.info = m; this.fast = m.device === 'webgpu';
               this.emit('');
@@ -233,6 +236,19 @@
       return this.loading;
     },
     emit(t) { for (const f of this.listeners) { try { f(t); } catch (e) { /* ignore */ } } },
+    // حالة النموذج على الجهاز: 'saved' محفوظ كاملاً، 'partial' تحميل لم يكتمل، null لم يُحمَّل
+    async stored() {
+      try {
+        if (!root.caches) return null;
+        const id = '/' + this.model + '/';
+        const has = async (name, test) => (await caches.has(name)) && (await (await caches.open(name)).keys()).some((r) => r.url.includes(id) && test(r.url));
+        const enc = await has('transformers-cache', (u) => /encoder_model[^/]*\.onnx$/.test(u));
+        const dec = enc && (await has('transformers-cache', (u) => /decoder_model[^/]*\.onnx$/.test(u)));
+        if (enc && dec) return 'saved';
+        if (await has('tasmee-partial', () => true)) return 'partial';
+      } catch (e) { /* ignore */ }
+      return null;
+    },
     transcribe(audio) {
       if (!this.ready) return Promise.reject(err('engine-load'));
       return new Promise((res, rej) => {

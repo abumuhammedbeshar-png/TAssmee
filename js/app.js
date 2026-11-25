@@ -1270,8 +1270,10 @@
           await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
         }
         if (window.caches) {
+          // نُبقي نموذج ترتيل المحمَّل كي لا يُعاد تحميله (١٠٠–٢٠٠ م.ب) مع كل تحديث
+          const keep = ['transformers-cache', 'tasmee-partial'];
           const ks = await caches.keys();
-          await Promise.all(ks.map((k) => caches.delete(k)));
+          await Promise.all(ks.filter((k) => !keep.includes(k)).map((k) => caches.delete(k)));
         }
       } catch (e) { /* ignore */ }
       location.reload();
@@ -1303,6 +1305,19 @@
         ${window.ASR.LocalEngine.ready ? '' : '<button class="btn ghost sm" id="eng-load" type="button">حمّل النموذج الآن</button>'}
         <details><summary>متقدّم</summary><label class="field"><span>معرّف النموذج على Hugging Face (بصيغة ONNX)</span><input type="text" id="st-model" dir="ltr" value="${esc(S.model)}" autocomplete="off"></label></details>${books}`;
       const lb = $('#eng-load');
+      if (lb && !window.ASR.LocalEngine.loading) {
+        window.ASR.LocalEngine.stored().then((k) => {
+          const st = $('#eng-st');
+          if (!k || !st || !lb.isConnected || window.ASR.LocalEngine.ready || window.ASR.LocalEngine.loading) return;
+          if (k === 'saved') {
+            st.textContent = 'محفوظ على جهازك، ويعمل دون إنترنت. يُشغَّل تلقائياً عند أول تسميع.';
+            lb.textContent = 'شغّله الآن';
+          } else {
+            st.textContent = 'تحميل سابق لم يكتمل، وسيُستكمل من حيث توقف.';
+            lb.textContent = 'أكمل التحميل';
+          }
+        });
+      }
       if (lb) lb.onclick = () => {
         S.modelOk = true; store.set('settings', S);
         lb.disabled = true;
@@ -1690,7 +1705,9 @@
       let reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         // نسخة جديدة من التطبيق نُشرت: نعيد التحميل إن لم يكن المستخدم في منتصف تسميع
-        if (!hadController || reloading || !$('#reader').hidden) return;
+        // ولا نعيد التحميل أثناء تنزيل نموذج ترتيل كي لا ينقطع
+        const L = window.ASR && window.ASR.LocalEngine;
+        if (!hadController || reloading || !$('#reader').hidden || (L && L.loading && !L.ready)) return;
         reloading = true;
         location.reload();
       });

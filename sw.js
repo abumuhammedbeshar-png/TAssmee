@@ -1,7 +1,7 @@
 /* عامل الخدمة: يجعل التطبيق يعمل دون اتصال بعد أول فتح */
-const VERSION = 'tasmee-v10';
+const VERSION = 'tasmee-v11';
 const SHELL = [
-  './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/resumable.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 const RUNTIME = 'tasmee-runtime';
@@ -18,7 +18,8 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== RUNTIME).map((k) => caches.delete(k))))
+      // نحذف نسخ التطبيق القديمة فقط، ونُبقي نموذج ترتيل المحمَّل (transformers-cache وأجزاء التحميل tasmee-partial)
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('tasmee-v') && k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
