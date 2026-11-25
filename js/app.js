@@ -25,8 +25,11 @@
     get(k, d) { try { const v = localStorage.getItem('tasmee:' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('tasmee:' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
   };
-  const DEF = { strict: 'mid', font: 28, reciter: 'ar.alafasy', lang: 'ar-SA', goal: 150, hidden: false, theme: 'auto', engine: 'local', server: '', model: window.ASR.DEFAULT_MODEL, modelOk: false };
-  const S = Object.assign({}, DEF, store.get('settings', {}));
+  const DEF = { strict: 'mid', font: 28, reciter: 'ar.alafasy', lang: 'ar-SA', goal: 150, hidden: false, theme: 'auto', engine: 'auto', server: '', model: window.ASR.DEFAULT_MODEL, modelOk: false };
+  const STORED = store.get('settings', {});
+  const S = Object.assign({}, DEF, STORED);
+  // من كان على «ترتيل · الجهاز» افتراضياً (دون أن يختاره بنفسه) ينتقل إلى «تلقائي»
+  if (!STORED.engineChosen && (!STORED.engine || STORED.engine === 'local')) S.engine = 'auto';
   function saveSettings() { store.set('settings', S); applySettings(); }
   function applySettings() {
     const r = document.documentElement;
@@ -310,7 +313,22 @@
   };
   const ENGINE_NAME = { browser: 'تعرّف المتصفح', local: 'نموذج ترتيل على جهازك', server: 'نموذج ترتيل على الخادم' };
   // نموذج ترتيل مدرَّب على القرآن فقط، فالكتب تبقى على تعرّف المتصفح
-  const engineFor = (kind) => (kind !== 'quran' ? 'browser' : ENGINE_NAME[S.engine] ? S.engine : 'browser');
+  // «تلقائي»: نموذج ترتيل إن كان الجهاز يدعم WebGPU (سريع)، وإلا تعرّف المتصفح الفوري
+  let GPU = false;
+  try {
+    if (navigator.gpu) navigator.gpu.requestAdapter().then((a) => { GPU = !!a; if ($('#eng-panel')) renderEngPanel(); }, () => {});
+  } catch (e) { /* ignore */ }
+  function autoEngine() {
+    const L = window.ASR.LocalEngine;
+    if (L.ready) return L.fast || !SR ? 'local' : 'browser';
+    if (GPU) return 'local';
+    return SR ? 'browser' : 'local';
+  }
+  const engineFor = (kind) => {
+    if (kind !== 'quran') return 'browser';
+    const e = S.engine === 'auto' ? autoEngine() : S.engine;
+    return ENGINE_NAME[e] ? e : 'browser';
+  };
   const canListen = (kind) => (engineFor(kind) === 'browser' ? !!SR : !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
   function makeListener(kind, h) {
     const e = engineFor(kind);
@@ -359,7 +377,7 @@
   function openReader(o) {
     stopListening(); stopAudio();
     const built = buildText(o.blocks);
-    Object.assign(R, { kind: o.kind, ref: o.ref, title: o.title, sub: o.sub || '', lang: o.lang || 'ar-SA', t0: 0, sid: null, log: '', live: [], extra: o.extra || {}, words: built.words, ayahs: built.ayahs });
+    Object.assign(R, { kind: o.kind, ref: o.ref, title: o.title, sub: o.sub || '', lang: o.lang || 'ar-SA', t0: 0, sid: null, log: '', live: [], vcur: null, extra: o.extra || {}, words: built.words, ayahs: built.ayahs });
     R.sess = new M.Session(built.words, { strictness: S.strict });
     const box = $('#r-text');
     box.innerHTML = `<div class="page" dir="${o.dir || 'rtl'}">${built.html}</div>`;
@@ -390,7 +408,7 @@
     $('#reader').hidden = true;
     if ($('#bookview').hidden) document.body.style.overflow = '';
     $('#r-text').innerHTML = '';
-    R.els = []; R.sess = null; R.live = [];
+    R.els = []; R.sess = null; R.live = []; R.vcur = null;
     renderContinue();
     saved.then(refreshMemo, refreshMemo);
   }
@@ -399,17 +417,23 @@
     const el = R.els[i];
     if (!el) return;
     const s = R.sess.state[i];
-    el.className = 'w s-' + s + (i === R.sess.pos ? ' cur' : '') + (R.live.includes(i) ? ' live' : '');
+    el.className = 'w s-' + s + (i === (R.vcur != null ? R.vcur : R.sess.pos) ? ' cur' : '') + (R.live.includes(i) ? ' live' : '');
     if (s === 'err') el.title = R.sess.heard[i] ? 'سمعتُ: ' + R.sess.heard[i] : 'لم تُقرأ';
     else if (el.title) el.removeAttribute('title');
   }
   function paintAll() { for (let i = 0; i < R.els.length; i++) paint(i); R.prevCur = R.sess.pos; }
   function moveCur() { const p = R.prevCur; R.prevCur = R.sess.pos; paint(p); paint(R.sess.pos); }
   function setLive(idx) {
-    const old = R.live;
+    const old = R.live, oldV = R.vcur;
     R.live = idx;
+    // المؤشر يتقدّم مع الكلمات المسموعة لحظياً، قبل اعتمادها
+    R.vcur = idx.length ? Math.max(...idx) + 1 : null;
     for (const i of old) paint(i);
     for (const i of idx) paint(i);
+    if (oldV != null) paint(oldV);
+    if (R.vcur != null) paint(R.vcur);
+    paint(R.sess.pos);
+    if (R.vcur != null && R.vcur !== oldV) scrollToCur();
   }
   function updateStats() {
     const st = R.sess.stats();
@@ -420,7 +444,7 @@
   }
   function scrollToCur(instant) {
     if (!R.els.length) return;
-    const el = R.els[Math.min(R.sess.pos, R.els.length - 1)];
+    const el = R.els[Math.min(R.vcur != null ? R.vcur : R.sess.pos, R.els.length - 1)];
     const box = $('#r-text');
     const bb = box.getBoundingClientRect();
     const r = el.getBoundingClientRect();
@@ -514,7 +538,7 @@
   function resetReader() {
     stopListening();
     R.sess.reset(R.sess.start);
-    R.sid = null; R.t0 = 0; R.log = ''; R.live = [];
+    R.sid = null; R.t0 = 0; R.log = ''; R.live = []; R.vcur = null;
     paintAll(); updateStats();
     const h = $('#r-heard'); h.classList.remove('on'); h.textContent = 'بدأنا من جديد. اضغط الميكروفون واقرأ';
     scrollToCur(true);
@@ -1045,13 +1069,13 @@
 
   /* ================= الإعدادات ================= */
   function openSettings() {
-    const seg = (k, opts) => `<div class="seg" data-k="${k}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${S[k] === v}">${l}</button>`).join('')}</div>`;
+    const seg = (k, opts, cls) => `<div class="seg ${cls || ''}" data-k="${k}">${opts.map(([v, l]) => `<button type="button" data-v="${v}" aria-pressed="${S[k] === v}">${l}</button>`).join('')}</div>`;
     const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`).join('');
     openSheet(`<h3>الإعدادات</h3><div class="set">${accountBlock()}
       <div class="field"><span>دقّة التصحيح <small>· المتساهلة تتجاوز عن أخطاء التعرّف الصوتي، والصارمة تدقّق أكثر</small></span>${seg('strict', [['low', 'متساهلة'], ['mid', 'متوسطة'], ['high', 'صارمة']])}</div>
       <label class="field"><span>حجم الخط: <b id="st-fv">${AR(S.font)}</b></span><input type="range" id="st-font" min="20" max="44" step="1" value="${S.font}"></label>
       <label class="field"><span>القارئ</span><select id="st-rec">${opt(RECITERS, S.reciter)}</select></label>
-      <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['local', 'ترتيل · على الجهاز'], ['server', 'ترتيل · خادم'], ['browser', 'المتصفح']])}<div id="eng-panel" class="engpanel"></div></div>
+      <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['auto', 'تلقائي (الأسرع لجهازك)'], ['browser', 'المتصفح · فوري'], ['local', 'ترتيل · على الجهاز'], ['server', 'ترتيل · خادم']], 'two')}<div id="eng-panel" class="engpanel"></div></div>
       <label class="field"><span>لهجة تعرّف المتصفح</span><select id="st-lang">${opt(DIALECTS, S.lang)}</select></label>
       <label class="field"><span>الهدف اليومي (عدد الكلمات)</span><input type="number" id="st-goal" min="10" step="10" inputmode="numeric" value="${S.goal}"></label>
       <div class="field"><span>المظهر</span>${seg('theme', [['auto', 'تلقائي'], ['light', 'فاتح'], ['dark', 'داكن']])}</div>
@@ -1064,7 +1088,7 @@
       S[sg.dataset.k] = b.dataset.v;
       $$('[data-v]', sg).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       saveSettings();
-      if (sg.dataset.k === 'engine') renderEngPanel();
+      if (sg.dataset.k === 'engine') { S.engineChosen = true; store.set('settings', S); renderEngPanel(); }
     }));
     renderEngPanel();
     $('#st-font').oninput = (e) => { S.font = +e.target.value; $('#st-fv').textContent = AR(S.font); saveSettings(); };
@@ -1088,8 +1112,12 @@
     const box = $('#eng-panel');
     if (!box) return;
     const books = '<p class="note">الكتب تستخدم تعرّف المتصفح دائماً، لأن نموذج ترتيل مدرَّب على القرآن وحده.</p>';
-    if (S.engine === 'local') {
-      box.innerHTML = `<p class="note">نموذج ترتيل المفتوح يعمل داخل جهازك: لا يغادره صوتك، ويعمل دون إنترنت بعد تحميله مرة واحدة (نحو ١٠٠–٢٠٠ م.ب). أسرع على الأجهزة التي تدعم WebGPU.</p>
+    if (S.engine === 'auto') {
+      const e = autoEngine();
+      box.innerHTML = `<p class="note">يختار الأسرع لجهازك: نموذج ترتيل الدقيق إن كان جهازك يدعم تسريع الرسوميات (WebGPU)، وإلا تعرّف المتصفح الذي يتابعك كلمةً كلمة فوراً.</p>
+        <p class="note"><b>على جهازك الآن:</b> ${esc(ENGINE_NAME[e])} · ${GPU ? 'يدعم WebGPU' : 'لا يدعم WebGPU'}</p>${books}`;
+    } else if (S.engine === 'local') {
+      box.innerHTML = `<p class="note">نموذج ترتيل المفتوح يعمل داخل جهازك: لا يغادره صوتك، ويعمل دون إنترنت بعد تحميله مرة واحدة (نحو ١٠٠–٢٠٠ م.ب). يصحّح بعد كل وقفة قصيرة؛ سريع على الأجهزة التي تدعم WebGPU، وأبطأ بثوانٍ على غيرها.</p>
         <p class="note" id="eng-st">${esc(engStatus())}</p>
         ${window.ASR.LocalEngine.ready ? '' : '<button class="btn ghost sm" id="eng-load" type="button">حمّل النموذج الآن</button>'}
         <details><summary>متقدّم</summary><label class="field"><span>معرّف النموذج على Hugging Face (بصيغة ONNX)</span><input type="text" id="st-model" dir="ltr" value="${esc(S.model)}" autocomplete="off"></label></details>${books}`;

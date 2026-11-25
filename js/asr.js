@@ -137,8 +137,8 @@
       }
       this.seg.push(f); this.lv.push(rms);
       if (speech) { this.silence = 0; this.voiced++; } else this.silence++;
-      if (this.silence >= 23) { this.end(); return; }          // ~0.7 ث صمت = نهاية عبارة
-      if (this.seg.length >= 467) { this.cut(); return; }        // ~14 ث حدّ أقصى
+      if (this.silence >= 17) { this.end(); return; }          // ~0.5 ث صمت = نهاية عبارة
+      if (this.seg.length >= 334) { this.cut(); return; }        // ~10 ث حدّ أقصى
       if (++this.sinceP >= 50 && this.voiced >= 15) {            // معاينة كل ~1.5 ث
         this.sinceP = 0;
         this.onPartial(concat(this.seg), this.seq);
@@ -321,7 +321,9 @@
       if (!j.final && (this.queue.length || !this.segm || j.seq !== this.segm.seq)) { this.pump(); return; }
       this.busy = true;
       try {
+        if (j.final) this.onStatus('⏳ أصحّح ما قرأت…');
         const text = tidy(await this.engine.transcribe(j.audio, { final: j.final }));
+        if (j.final && !text && this.active) this.onStatus('أستمع إليك…');
         if (j.final) { this.onPartial(''); if (text) this.onFinal(text); } else if (this.active && text) this.onPartial(text);
       } catch (e) {
         if (j.final) this.onError((e && e.code) || 'engine-run');
