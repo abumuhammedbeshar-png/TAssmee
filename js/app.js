@@ -8,6 +8,7 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
   const AR = (n) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const BUILD = 9; // رقم إصدار التطبيق، يظهر في الإعدادات
   const API = 'https://api.alquran.cloud/v1';
   const AUDIO = (ed, n) => `https://cdn.islamic.network/quran/audio/128/${ed}/${n}.mp3`;
   const TESSERACT = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
@@ -1151,6 +1152,9 @@
       <label class="field"><span>لهجة تعرّف المتصفح</span><select id="st-lang">${opt(DIALECTS, S.lang)}</select></label>
       <label class="field"><span>الهدف اليومي (عدد الكلمات)</span><input type="number" id="st-goal" min="10" step="10" inputmode="numeric" value="${S.goal}"></label>
       <div class="field"><span>المظهر</span>${seg('theme', [['auto', 'تلقائي'], ['light', 'فاتح'], ['dark', 'داكن']])}</div>
+      <div class="field"><span>إصدار التطبيق: <b>${AR(BUILD)}</b></span>
+        <button class="btn ghost sm" type="button" id="st-upd"><svg><use href="#i-redo"/></svg>تحقّق من وجود تحديث</button>
+        <small>يجلب أحدث نسخة من الموقع ويعيد تشغيل التطبيق. لا يحذف كتبك ولا تقدّمك.</small></div>
       <button class="btn danger" id="st-wipe"><svg><use href="#i-trash"/></svg>مسح كل البيانات المحفوظة</button>
       <p class="note">نص المصحف من مشروع «تنزيل» (tanzil.net) دون تعديل، عبر خدمة AlQuran.cloud، والتلاوات من خدمة Islamic Network. الكتب التي ترفعها تبقى على جهازك ولا تُرسل إلى أي خادم.</p>
     </div>`);
@@ -1167,6 +1171,21 @@
     $('#st-rec').onchange = (e) => { S.reciter = e.target.value; saveSettings(); };
     $('#st-lang').onchange = (e) => { S.lang = e.target.value; saveSettings(); if (R.kind === 'quran') R.lang = S.lang; };
     $('#st-goal').onchange = (e) => { S.goal = clamp(parseInt(e.target.value, 10) || DEF.goal, 10, 100000); saveSettings(); if (!$('#tab-progress').hidden) renderProgress(); };
+    $('#st-upd').onclick = async () => {
+      const b = $('#st-upd');
+      b.disabled = true; b.textContent = 'جارٍ التحديث…';
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
+        }
+        if (window.caches) {
+          const ks = await caches.keys();
+          await Promise.all(ks.map((k) => caches.delete(k)));
+        }
+      } catch (e) { /* ignore */ }
+      location.reload();
+    };
     $('#st-wipe').onclick = () => confirmSheet('مسح كل البيانات؟', 'سيُحذف سجلّ التقدّم والكتب المرفوعة ونص المصحف المحفوظ للعمل دون اتصال. لا يمكن التراجع.', 'امسح', async () => {
       for (const s of ['kv', 'books', 'pdfs', 'sessions']) await DB.clear(s);
       try { Object.keys(localStorage).filter((k) => k.startsWith('tasmee:')).forEach((k) => localStorage.removeItem(k)); } catch (e) { /* ignore */ }
@@ -1583,7 +1602,12 @@
         reloading = true;
         location.reload();
       });
-      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').then((reg) => {
+        if (!reg || !reg.update) return;
+        const check = () => { if (!document.hidden) { try { reg.update().catch(() => {}); } catch (e) { /* ignore */ } } };
+        document.addEventListener('visibilitychange', check);
+        setTimeout(check, 3000);
+      }).catch(() => {}));
     }
     window.__tasmee = { R, S, DB, loadPdfjs, renderPage, flipText, looksReversed, Cloud: window.Cloud };
   }

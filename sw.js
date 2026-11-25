@@ -1,5 +1,5 @@
 /* عامل الخدمة: يجعل التطبيق يعمل دون اتصال بعد أول فتح */
-const VERSION = 'tasmee-v8';
+const VERSION = 'tasmee-v9';
 const SHELL = [
   './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/asr.js', 'js/asr-worker.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
@@ -33,9 +33,26 @@ self.addEventListener('fetch', (e) => {
   const cacheable = sameOrigin || /(^|\.)fonts\.(googleapis|gstatic)\.com$/.test(url.hostname) || url.hostname === 'cdn.jsdelivr.net' || (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/'));
   if (!cacheable) return;
 
-  // ملف الإعدادات: من الشبكة أولاً كي يظهر أثر تعديله فوراً
-  if (sameOrigin && url.pathname.endsWith('/config.js')) {
-    e.respondWith(fetch(req).then((res) => { if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); } return res; }).catch(() => caches.match(req, { ignoreSearch: true })));
+  // ملفات التطبيق (صغيرة): من الشبكة أولاً كي يصل كل تحديث فوراً، ومن الذاكرة إن تعذّر الاتصال
+  const isApp = sameOrigin && !url.pathname.includes('/lib/')
+    && (url.pathname.endsWith('/') || /\.(html|js|css|webmanifest)$/.test(url.pathname));
+  if (isApp) {
+    e.respondWith((async () => {
+      const cache = await caches.open(VERSION);
+      try {
+        const res = await Promise.race([
+          fetch(req),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), 3500)),
+        ]);
+        if (res && res.ok) { cache.put(req, res.clone()).catch(() => {}); return res; }
+        throw new Error('bad');
+      } catch (err) {
+        const hit = await cache.match(req, { ignoreSearch: true });
+        if (hit) return hit;
+        if (req.mode === 'navigate') return (await cache.match('index.html')) || Response.error();
+        return Response.error();
+      }
+    })());
     return;
   }
 
