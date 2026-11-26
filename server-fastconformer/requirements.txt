@@ -1,0 +1,5 @@
+nemo_toolkit[asr]>=2.0,<3
+huggingface_hub
+starlette
+uvicorn
+numpy

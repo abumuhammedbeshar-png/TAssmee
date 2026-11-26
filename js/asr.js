@@ -1,15 +1,14 @@
 /*
- * asr.js — التعرّف على التلاوة بنموذج ترتيل (tarteel-ai/whisper-base-ar-quran)
+ * asr.js — التعرّف على التلاوة بنموذج
  *  - التقاط الصوت من الميكروفون وتحويله إلى 16 كيلوهرتز
  *  - تقطيعه عند وقفات القارئ (كشف الصوت من الصمت)
- *  - محرّكان: داخل الجهاز (transformers.js في Web Worker) أو خادم خارجي
+ *  - محرّكان: «المعلّم» داخل الجهاز (js/ctc-worker.js)، أو نموذج ترتيل على خادم خارجي
  * الواجهة نفسها التي يستعملها التطبيق مع تعرّف المتصفح: start() / stop() / onFinal / onPartial / onState / onError
  */
 (function (root) {
   'use strict';
   const RATE = 16000;
   const FRAME = 480; // 30 ms
-  const DEFAULT_MODEL = 'iqbalaesthetic/Basira';
 
   const WORKLET = `class TasmeeTap extends AudioWorkletProcessor {
     constructor() { super(); this.buf = new Float32Array(2048); this.n = 0; }
@@ -192,81 +191,6 @@
   const err = (code, msg) => Object.assign(new Error(msg || code), { code });
   const AR = (n) => String(n).replace(/\d/g, (d) => '٠١٢٣٤٥٦٧٨٩'[d]);
   const fmtMB = (b) => AR((b / 1048576).toFixed(0));
-
-  /* ---------- المحرّك داخل الجهاز ---------- */
-  const LocalEngine = {
-    worker: null, ready: false, loading: null, info: null, fast: false,
-    pending: new Map(), id: 0, listeners: new Set(), model: DEFAULT_MODEL, lib: null,
-    ensure(onStatus) {
-      if (this.ready) return Promise.resolve(this.info);
-      if (onStatus) this.listeners.add(onStatus);
-      if (!this.loading) {
-        // نطلب من المتصفح ألا يحذف النموذج المحفوظ عند امتلاء الذاكرة
-        try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* ignore */ }
-        this.loading = new Promise((res, rej) => {
-          let w;
-          try {
-            w = new Worker(new URL('js/asr-worker.js', root.location.href), { type: 'module' });
-          } catch (e) { rej(err('engine-unsupported')); return; }
-          this.worker = w;
-          this.emit('جارٍ تجهيز نموذج ترتيل…');
-          w.onmessage = (e) => {
-            const m = e.data;
-            if (m.type === 'progress') {
-              if (!m.net) this.emit('جارٍ تشغيل نموذج ترتيل المحفوظ على جهازك…');
-              else if (m.total > 0) this.emit(`جارٍ تحميل نموذج ترتيل… ${AR(Math.min(99, Math.round((m.loaded / m.total) * 100)))}٪ (${fmtMB(m.loaded)} من ${fmtMB(m.total)} م.ب) · يُستكمل من حيث توقف إن خرجت`);
-            } else if (m.type === 'ready') {
-              this.ready = true; this.info = m; this.fast = m.device === 'webgpu';
-              this.emit('');
-              res(m);
-            } else if (m.type === 'fail') {
-              rej(err('engine-load', m.message));
-            } else if (m.type === 'result' || m.type === 'error') {
-              const p = this.pending.get(m.id);
-              if (!p) return;
-              this.pending.delete(m.id);
-              if (m.type === 'result') p.res(m.text || ''); else p.rej(err('engine-run', m.message));
-            }
-          };
-          w.onerror = (e) => { rej(err('engine-load', e.message)); };
-          w.postMessage({ type: 'load', model: this.model, lib: this.lib || undefined });
-        }).catch((e) => {
-          this.loading = null;
-          if (this.worker) { this.worker.terminate(); this.worker = null; }
-          throw e;
-        }).finally(() => { this.listeners.clear(); });
-      }
-      return this.loading;
-    },
-    emit(t) { for (const f of this.listeners) { try { f(t); } catch (e) { /* ignore */ } } },
-    // حالة النموذج على الجهاز: 'saved' محفوظ كاملاً، 'partial' تحميل لم يكتمل، null لم يُحمَّل
-    async stored() {
-      try {
-        if (!root.caches) return null;
-        const id = '/' + this.model + '/';
-        const has = async (name, test) => (await caches.has(name)) && (await (await caches.open(name)).keys()).some((r) => r.url.includes(id) && test(r.url));
-        const enc = await has('transformers-cache', (u) => /encoder_model[^/]*\.onnx$/.test(u));
-        const dec = enc && (await has('transformers-cache', (u) => /decoder_model[^/]*\.onnx$/.test(u)));
-        if (enc && dec) return 'saved';
-        if (await has('tasmee-partial', () => true)) return 'partial';
-      } catch (e) { /* ignore */ }
-      return null;
-    },
-    transcribe(audio) {
-      if (!this.ready) return Promise.reject(err('engine-load'));
-      return new Promise((res, rej) => {
-        const id = ++this.id;
-        this.pending.set(id, { res, rej });
-        this.worker.postMessage({ type: 'run', id, audio }, [audio.buffer]);
-      });
-    },
-    reset() {
-      if (this.worker) this.worker.terminate();
-      this.worker = null; this.ready = false; this.loading = null; this.info = null; this.fast = false;
-      for (const p of this.pending.values()) p.rej(err('engine-run'));
-      this.pending.clear();
-    },
-  };
 
   /* ---------- المحرّك على خادم ---------- */
   const ServerEngine = {
@@ -510,5 +434,5 @@
     }
   }
 
-  root.ASR = { Segmenter, ModelListener, LocalEngine, ServerEngine, CtcEngine, encodeWav, DEFAULT_MODEL, RATE };
+  root.ASR = { Segmenter, ModelListener, ServerEngine, CtcEngine, encodeWav, RATE };
 })(window);

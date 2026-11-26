@@ -1,7 +1,7 @@
 /* عامل الخدمة: يجعل التطبيق يعمل دون اتصال بعد أول فتح */
-const VERSION = 'tasmee-v16';
+const VERSION = 'tasmee-v18';
 const SHELL = [
-  './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/phonetic.js', 'js/asr.js', 'js/asr-worker.js', 'js/ctc-worker.js', 'js/onnx-patch.js', 'js/resumable.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
+  './', 'index.html', 'config.js', 'css/style.css', 'js/matcher.js', 'js/pdftext.js', 'js/phonetic.js', 'js/asr.js', 'js/ctc-worker.js', 'js/onnx-patch.js', 'js/resumable.js', 'js/cloud.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 const RUNTIME = 'tasmee-runtime';

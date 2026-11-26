@@ -26,11 +26,13 @@
     get(k, d) { try { const v = localStorage.getItem('tasmee:' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('tasmee:' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
   };
-  const DEF = { strict: 'mid', font: 28, reciter: 'ar.alafasy', lang: 'ar-SA', goal: 150, hidden: false, theme: 'auto', engine: 'auto', server: '', model: window.ASR.DEFAULT_MODEL, modelOk: false };
+  const DEF = { strict: 'mid', font: 28, reciter: 'ar.alafasy', lang: 'ar-SA', goal: 150, hidden: false, theme: 'auto', engine: 'auto', server: '' };
   const STORED = store.get('settings', {});
   const S = Object.assign({}, DEF, STORED);
   // من كان على «ترتيل · الجهاز» افتراضياً (دون أن يختاره بنفسه) ينتقل إلى «تلقائي»
   if (!STORED.engineChosen && (!STORED.engine || STORED.engine === 'local')) S.engine = 'auto';
+  // «ترتيل · على الجهاز» أُزيل: من اختاره ينتقل إلى «المعلّم» (يعمل على الجهاز أيضاً)
+  if (S.engine === 'local') S.engine = 'ctc';
   function saveSettings() { store.set('settings', S); applySettings(); }
   function applySettings() {
     const r = document.documentElement;
@@ -42,13 +44,7 @@
     syncEngines();
   }
   function syncEngines() {
-    const A = window.ASR;
-    A.ServerEngine.url = S.server;
-    const model = (S.model || '').trim() || A.DEFAULT_MODEL;
-    if (A.LocalEngine.model !== model) {
-      if (A.LocalEngine.ready || A.LocalEngine.loading) A.LocalEngine.reset();
-      A.LocalEngine.model = model;
-    }
+    window.ASR.ServerEngine.url = S.server;
   }
 
   /* ================= التخزين (IndexedDB مع بديل في الذاكرة) ================= */
@@ -306,32 +302,26 @@
     'language-not-supported': 'هذه اللغة غير مدعومة للتعرّف على الصوت في متصفحك.',
     loop: 'توقّف الاستماع. اضغط الميكروفون للمتابعة.',
     start: 'تعذّر تشغيل الميكروفون. أعد المحاولة.',
-    'engine-load': 'تعذّر تحميل نموذج ترتيل. تحقّق من اتصالك بالإنترنت، أو اختر محرّكاً آخر من الإعدادات.',
+    'engine-load': 'تعذّر تشغيل محرّك التعرّف. تحقّق من اتصالك بالإنترنت، أو اختر محرّكاً آخر من الإعدادات.',
     'engine-run': 'تعذّر التعرّف على هذا المقطع. تابع القراءة.',
     'engine-unsupported': 'متصفحك لا يدعم تشغيل النموذج على الجهاز. اختر «خادم» أو «المتصفح» من الإعدادات.',
     'no-server': 'أدخل رابط خادم التعرّف من الإعدادات أولاً.',
     'ctc-load': 'تعذّر تحميل «المعلّم». تحقّق من اتصالك بالإنترنت، أو اختر محرّكاً آخر من الإعدادات.',
     server: 'تعذّر الوصول إلى خادم التعرّف. تأكد أن الخادم يعمل.',
   };
-  const ENGINE_NAME = { browser: 'تعرّف المتصفح', local: 'نموذج ترتيل على جهازك', server: 'نموذج ترتيل على الخادم', ctc: '«المعلّم» على جهازك (تجريبي)' };
-  // نموذج ترتيل مدرَّب على القرآن فقط، فالكتب تبقى على تعرّف المتصفح
-  // «تلقائي»: نموذج ترتيل إن كان الجهاز يدعم WebGPU (سريع)، وإلا تعرّف المتصفح الفوري
-  let GPU = false;
-  try {
-    if (navigator.gpu) navigator.gpu.requestAdapter().then((a) => { GPU = !!a; if ($('#eng-panel')) renderEngPanel(); }, () => {});
-  } catch (e) { /* ignore */ }
+  const ENGINE_NAME = { browser: 'تعرّف المتصفح', server: 'نموذج التلاوة على خادمك', ctc: '«المعلّم» على جهازك (تجريبي)' };
+  // النماذج مدرَّبة على القرآن فقط، فالكتب تبقى على تعرّف المتصفح
+  // «تلقائي»: «المعلّم» إن أمكن تشغيله في المتصفح، وإلا تعرّف المتصفح
+  const ctcSupported = () => !!(window.Worker && window.WebAssembly && window.caches);
   function autoEngine() {
-    const L = window.ASR.LocalEngine;
-    if (L.ready) return L.fast || !SR ? 'local' : 'browser';
-    if (GPU) return 'local';
-    return SR ? 'browser' : 'local';
+    return ctcSupported() ? 'ctc' : 'browser';
   }
   // kind: 'quran' (تسميع سورة) · 'search' (البحث بالتلاوة) · غير ذلك (الكتب)
   const engineFor = (kind) => {
     if (kind !== 'quran' && kind !== 'search') return 'browser';
     let e = S.engine === 'auto' ? autoEngine() : S.engine;
     // «المعلّم» يقارن بما يجب أن يُقرأ، فلا يصلح للبحث عن آية مجهولة
-    if (e === 'ctc' && kind === 'search') e = SR ? 'browser' : 'local';
+    if (e === 'ctc' && kind === 'search') e = SR || !S.server ? 'browser' : 'server';
     return ENGINE_NAME[e] ? e : 'browser';
   };
   const canListen = (kind) => (engineFor(kind) === 'browser' ? !!SR : !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
@@ -339,13 +329,13 @@
     const e = engineFor(kind);
     if (e === 'browser') return SR ? new Listener(h) : null;
     const A = window.ASR;
-    return new A.ModelListener(Object.assign({ engine: e === 'local' ? A.LocalEngine : e === 'ctc' ? A.CtcEngine : A.ServerEngine }, h));
+    return new A.ModelListener(Object.assign({ engine: e === 'ctc' ? A.CtcEngine : A.ServerEngine }, h));
   }
   // تعرّف المتصفح أقل دقة مع التلاوة، فنتساهل معه ما لم يختر المستخدم دقة بنفسه
   const effStrict = (kind) => (S.strictChosen ? S.strict : engineFor(kind) === 'browser' ? 'low' : S.strict);
   const needsConsent = (kind) => {
     const e = engineFor(kind);
-    return (e === 'local' && !window.ASR.LocalEngine.ready && !S.modelOk) || (e === 'ctc' && !window.ASR.CtcEngine.ready && !S.ctcOk);
+    return e === 'ctc' && !window.ASR.CtcEngine.ready && !S.ctcOk;
   };
   function askModelDownload(go, kind) {
     if (engineFor(kind || 'quran') === 'ctc' && !S.ctcOk) {
@@ -354,15 +344,10 @@
         <p class="note">بعد التحميل يعمل داخل جهازك حتى دون إنترنت، ولا يغادره صوتك. ما زال تجريبياً: إن رأيت تصحيحاً غير دقيق فأخبرنا، أو اختر محرّكاً آخر من الإعدادات.</p>
         <div class="row"><button class="btn primary" id="md-ok">حمّل وابدأ</button><button class="btn ghost" id="md-no">استخدم تعرّف المتصفح</button></div>`);
       $('#md-ok').onclick = () => { S.ctcOk = true; store.set('settings', S); closeSheet(); go(); };
-      $('#md-no').onclick = () => { S.engine = 'browser'; saveSettings(); closeSheet(); go(); };
+      $('#md-no').onclick = () => { S.engine = 'browser'; S.engineChosen = true; saveSettings(); closeSheet(); go(); };
       return;
     }
-    openSheet(`<h3>تحميل نموذج ترتيل</h3>
-      <p>لتصحيح التلاوة بدقة أعلى سيُحمَّل نموذج ترتيل المفتوح (whisper-base-ar-quran) إلى جهازك مرة واحدة: نحو ${navigator.gpu ? '١٠٠–٢٠٠' : '١٠٠'} م.ب. يُستحسن الاتصال بشبكة Wi-Fi.</p>
-      <p class="note">بعد التحميل يعمل التعرّف داخل جهازك حتى دون إنترنت، ولا يغادره صوتك.</p>
-      <div class="row"><button class="btn primary" id="md-ok">حمّل وابدأ</button><button class="btn ghost" id="md-no">استخدم تعرّف المتصفح</button></div>`);
-    $('#md-ok').onclick = () => { S.modelOk = true; store.set('settings', S); closeSheet(); go(); };
-    $('#md-no').onclick = () => { S.engine = 'browser'; saveSettings(); closeSheet(); go(); };
+    go();
   }
   function micError(code, detail) {
     // التفاصيل التقنية (مثل «model: HTTP 404») تساعد على معرفة سبب تعذّر التحميل
@@ -1259,7 +1244,7 @@
       <div class="field"><span>دقّة التصحيح <small>· المتساهلة تتجاوز عن أخطاء التعرّف الصوتي، والصارمة تدقّق أكثر${S.strictChosen ? '' : ' · تُضبط تلقائياً حسب المحرّك'}</small></span>${seg('strict', [['low', 'متساهلة'], ['mid', 'متوسطة'], ['high', 'صارمة']])}</div>
       <label class="field"><span>حجم الخط: <b id="st-fv">${AR(S.font)}</b></span><input type="range" id="st-font" min="20" max="44" step="1" value="${S.font}"></label>
       <label class="field"><span>القارئ</span><select id="st-rec">${opt(RECITERS, S.reciter)}</select></label>
-      <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['auto', 'تلقائي (الأسرع لجهازك)'], ['browser', 'المتصفح · فوري'], ['local', 'ترتيل · على الجهاز'], ['server', 'ترتيل · خادم'], ['ctc', 'المعلّم · سريع (تجريبي)']], 'two')}<div id="eng-panel" class="engpanel"></div></div>
+      <div class="field"><span>محرّك التعرّف على التلاوة</span>${seg('engine', [['auto', 'تلقائي'], ['ctc', 'المعلّم · على الجهاز'], ['browser', 'المتصفح · فوري'], ['server', 'خادم خاص']], 'two')}<div id="eng-panel" class="engpanel"></div></div>
       <label class="field"><span>لهجة تعرّف المتصفح</span><select id="st-lang">${opt(DIALECTS, S.lang)}</select></label>
       <label class="field"><span>الهدف اليومي (عدد الكلمات)</span><input type="number" id="st-goal" min="10" step="10" inputmode="numeric" value="${S.goal}"></label>
       <div class="field"><span>المظهر</span>${seg('theme', [['auto', 'تلقائي'], ['light', 'فاتح'], ['dark', 'داكن']])}</div>
@@ -1292,8 +1277,8 @@
           await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
         }
         if (window.caches) {
-          // نُبقي نموذج ترتيل المحمَّل كي لا يُعاد تحميله (١٠٠–٢٠٠ م.ب) مع كل تحديث
-          const keep = ['transformers-cache', 'tasmee-partial', 'tasmee-models'];
+          // نُبقي نموذج «المعلّم» المحمَّل كي لا يُعاد تحميله مع كل تحديث
+          const keep = ['tasmee-partial', 'tasmee-models'];
           const ks = await caches.keys();
           await Promise.all(ks.filter((k) => !keep.includes(k)).map((k) => caches.delete(k)));
         }
@@ -1307,48 +1292,14 @@
     });
   }
 
-  function engStatus() {
-    const L = window.ASR.LocalEngine;
-    if (L.ready) return `جاهز على جهازك · ${L.info.device === 'webgpu' ? 'WebGPU (سريع)' : 'WASM'} · ${L.info.dtype}`;
-    if (L.loading) return 'جارٍ التحميل…';
-    return 'لم يُحمَّل بعد.';
-  }
   function renderEngPanel() {
     const box = $('#eng-panel');
     if (!box) return;
-    const books = '<p class="note">الكتب تستخدم تعرّف المتصفح دائماً، لأن نموذج ترتيل مدرَّب على القرآن وحده.</p>';
+    const books = '<p class="note">الكتب تستخدم تعرّف المتصفح دائماً، لأن نماذج التلاوة مدرَّبة على القرآن وحده.</p>';
     if (S.engine === 'auto') {
       const e = autoEngine();
-      box.innerHTML = `<p class="note">يختار الأسرع لجهازك: نموذج ترتيل الدقيق إن كان جهازك يدعم تسريع الرسوميات (WebGPU)، وإلا تعرّف المتصفح الذي يتابعك كلمةً كلمة فوراً.</p>
-        <p class="note"><b>على جهازك الآن:</b> ${esc(ENGINE_NAME[e])} · ${GPU ? 'يدعم WebGPU' : 'لا يدعم WebGPU'}</p>${books}`;
-    } else if (S.engine === 'local') {
-      box.innerHTML = `<p class="note">نموذج ترتيل المفتوح يعمل داخل جهازك: لا يغادره صوتك، ويعمل دون إنترنت بعد تحميله مرة واحدة (نحو ١٠٠–٢٠٠ م.ب). يصحّح بعد كل وقفة قصيرة؛ سريع على الأجهزة التي تدعم WebGPU، وأبطأ بثوانٍ على غيرها.</p>
-        <p class="note" id="eng-st">${esc(engStatus())}</p>
-        ${window.ASR.LocalEngine.ready ? '' : '<button class="btn ghost sm" id="eng-load" type="button">حمّل النموذج الآن</button>'}
-        <details><summary>متقدّم</summary><label class="field"><span>معرّف النموذج على Hugging Face (بصيغة ONNX)</span><input type="text" id="st-model" dir="ltr" value="${esc(S.model)}" autocomplete="off"></label></details>${books}`;
-      const lb = $('#eng-load');
-      if (lb && !window.ASR.LocalEngine.loading) {
-        window.ASR.LocalEngine.stored().then((k) => {
-          const st = $('#eng-st');
-          if (!k || !st || !lb.isConnected || window.ASR.LocalEngine.ready || window.ASR.LocalEngine.loading) return;
-          if (k === 'saved') {
-            st.textContent = 'محفوظ على جهازك، ويعمل دون إنترنت. يُشغَّل تلقائياً عند أول تسميع.';
-            lb.textContent = 'شغّله الآن';
-          } else {
-            st.textContent = 'تحميل سابق لم يكتمل، وسيُستكمل من حيث توقف.';
-            lb.textContent = 'أكمل التحميل';
-          }
-        });
-      }
-      if (lb) lb.onclick = () => {
-        S.modelOk = true; store.set('settings', S);
-        lb.disabled = true;
-        const st = $('#eng-st');
-        window.ASR.LocalEngine.ensure((t) => { if (t && st.isConnected) st.textContent = t; })
-          .then(() => { toast('نموذج ترتيل جاهز'); if ($('#eng-panel')) renderEngPanel(); })
-          .catch(() => { if (st.isConnected) st.textContent = MIC_ERR['engine-load']; lb.disabled = false; });
-      };
-      $('#st-model').onchange = (e) => { S.model = e.target.value.trim() || window.ASR.DEFAULT_MODEL; saveSettings(); renderEngPanel(); };
+      box.innerHTML = `<p class="note">يستخدم «المعلّم» على جهازك إن كان متصفحك يدعمه، وإلا تعرّف المتصفح.</p>
+        <p class="note"><b>على جهازك الآن:</b> ${esc(ENGINE_NAME[e])}</p>${books}`;
     } else if (S.engine === 'ctc') {
       const C = window.ASR.CtcEngine;
       box.innerHTML = `<p class="note">«المعلّم» نموذج مفتوح (HisnLabs Tajweed v2) يسمع الأصوات لا الكلمات، فيقارن تلاوتك بالآيات حرفاً حرفاً ولا «يصحّح» خطأك تلقائياً كما تفعل نماذج الكتابة. يعمل داخل جهازك دون إنترنت بعد تحميله مرة واحدة (نحو ٣٣ م.ب)، ويصحّح فور كل وقفة حتى على الجوالات المتوسطة.</p>
@@ -1377,7 +1328,7 @@
           .catch((e) => { if (st.isConnected) st.textContent = MIC_ERR['ctc-load'] + (e && e.message ? ` (${e.message})` : ''); lb.disabled = false; });
       };
     } else if (S.engine === 'server') {
-      box.innerHTML = `<p class="note">شغّل الخادم المرفق في مجلد <b dir="ltr">server</b> على Hugging Face Spaces مجاناً، ثم الصق رابطه هنا. مناسب للجوالات البطيئة.</p>
+      box.innerHTML = `<p class="note">انشر أحد الخادمين المرفقين على Hugging Face Spaces مجاناً، ثم الصق رابطه هنا: مجلد <b dir="ltr">server</b> (نموذج ترتيل)، أو مجلد <b dir="ltr">server-fastconformer</b> (نموذج FastConformer-Quran، أدق، للاستخدام غير الربحي). الخطوات في ملف README داخل كل مجلد.</p>
         <label class="field"><span>رابط الخادم</span><input type="url" id="st-server" dir="ltr" placeholder="https://username-tasmee-asr.hf.space" value="${esc(S.server)}" autocomplete="off"></label>
         <div class="row"><button class="btn ghost sm" id="eng-test" type="button">اختبر الاتصال</button></div><p class="note" id="eng-st"></p>${books}`;
       $('#st-server').onchange = (e) => { S.server = e.target.value.trim(); saveSettings(); };
@@ -1388,7 +1339,7 @@
         try {
           await window.ASR.ServerEngine.ensure();
           const j = await window.ASR.ServerEngine.health();
-          st.textContent = `متصل · ${j.model || 'نموذج ترتيل'}${j.ready === false ? ' (يُحمَّل الآن على الخادم)' : ''}`;
+          st.textContent = `متصل · ${j.model || 'نموذج التلاوة'}${j.ready === false ? ' (يُحمَّل الآن على الخادم)' : ''}`;
         } catch (e) { st.textContent = MIC_ERR[(e && e.code) || 'server'] || MIC_ERR.server; }
       };
     } else {
@@ -1738,9 +1689,24 @@
     window.addEventListener('pagehide', parkSession);
   }
 
+  /** حذف نموذج ترتيل القديم (١٠٠–٢٠٠ م.ب) من الجهاز بعد إزالة محرّكه، مرة واحدة */
+  async function freeOldModel() {
+    if (S.oldModelFreed || !window.caches) return;
+    try {
+      await caches.delete('transformers-cache');
+      if (await caches.has('tasmee-partial')) {
+        const c = await caches.open('tasmee-partial');
+        for (const k of await c.keys()) if (!k.url.includes('tajweed-v2')) await c.delete(k);
+      }
+      S.oldModelFreed = true;
+      delete S.model; delete S.modelOk;
+      store.set('settings', S);
+    } catch (e) { /* ignore */ }
+  }
+
   function init() {
-    if (window.__ASR_LIB) window.ASR.LocalEngine.lib = window.__ASR_LIB;
     applySettings();
+    freeOldModel();
     bind();
     flushPending();
     initAuth();
@@ -1754,10 +1720,9 @@
       let reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         // نسخة جديدة من التطبيق نُشرت: نعيد التحميل إن لم يكن المستخدم في منتصف تسميع
-        // ولا نعيد التحميل أثناء تنزيل نموذج ترتيل كي لا ينقطع
-        const L = window.ASR && window.ASR.LocalEngine;
+        // ولا نعيد التحميل أثناء تنزيل «المعلّم» كي لا ينقطع
         const C = window.ASR && window.ASR.CtcEngine;
-        if (!hadController || reloading || !$('#reader').hidden || (L && L.loading && !L.ready) || (C && C.loading && !C.ready)) return;
+        if (!hadController || reloading || !$('#reader').hidden || (C && C.loading && !C.ready)) return;
         reloading = true;
         location.reload();
       });
